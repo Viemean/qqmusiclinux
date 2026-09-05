@@ -6,17 +6,13 @@ using Terminal.Gui.App;
 using Terminal.Gui.Views;
 using QQMusic.Tui.Api;
 using QQMusic.Tui.Models;
+using QQMusic.Tui.Services;
 using QQMusic.Tui.Utils;
 
 namespace QQMusic.Tui.UI;
 
 public sealed partial class MainWindow
 {
-    public enum SingerSubMode
-    {
-        Songs,
-        Albums
-    }
 
     private sealed record PageNavigationSnapshot(
         ViewMode ViewMode,
@@ -58,20 +54,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        // 整理歌曲的所有可用歌手项（支持 singer 数组以及 "A/B" 字符串拆分兜底）
-        var singers = new List<ArtistInfo>(song.Singers);
-        if (singers.Count == 0 && !string.IsNullOrWhiteSpace(song.Artist))
-        {
-            if (song.Artist.Contains('/'))
-            {
-                var splitNames = song.Artist.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                singers.AddRange(splitNames.Select(n => new ArtistInfo(n, "", 0)));
-            }
-            else
-            {
-                singers.Add(new ArtistInfo(song.Artist, "", 0));
-            }
-        }
+        var singers = ExtractArtistsFromSong(song);
 
         if (singers.Count > 1)
         {
@@ -94,6 +77,51 @@ public sealed partial class MainWindow
         }
 
         _ = DrilldownToArtistAsync(new ArtistInfo(song.Artist, "", 0));
+    }
+
+    private void HandleNowPlayingArtistClicked(Song song)
+    {
+        if (song.IsLocal)
+        {
+            _controlBar.UpdateStatus("[本地音乐] 本地曲目暂不支持查看在线歌手主页");
+            return;
+        }
+
+        var singers = ExtractArtistsFromSong(song);
+        if (singers.Count > 1)
+        {
+            // 在当前播放界面的右侧歌词区域弹出多歌手选择窗口，彻底避开左侧封面硬件图层
+            var dlg = new SelectArtistDialog(singers, inLyricArea: true);
+            Application.Run(dlg);
+            if (dlg.SelectedArtist != null)
+            {
+                CloseNowPlayingView();
+                _ = DrilldownToArtistAsync(dlg.SelectedArtist);
+            }
+            return;
+        }
+
+        CloseNowPlayingView();
+        var targetArtist = singers.Count == 1 ? singers[0] : new ArtistInfo(song.Artist, "", 0);
+        _ = DrilldownToArtistAsync(targetArtist);
+    }
+
+    private static List<ArtistInfo> ExtractArtistsFromSong(Song song)
+    {
+        var singers = new List<ArtistInfo>(song.Singers);
+        if (singers.Count == 0 && !string.IsNullOrWhiteSpace(song.Artist))
+        {
+            if (song.Artist.Contains('/'))
+            {
+                var splitNames = song.Artist.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                singers.AddRange(splitNames.Select(n => new ArtistInfo(n, "", 0)));
+            }
+            else
+            {
+                singers.Add(new ArtistInfo(song.Artist, "", 0));
+            }
+        }
+        return singers;
     }
 
     private void OnAlbumClicked(Song song)
@@ -140,13 +168,16 @@ public sealed partial class MainWindow
             // 支持通过歌手名字在缺失 mid/id 时自动检索补全
             var detail = await QqMusicApi.GetSingerDetailAsync(artist.Mid, artist.Id, artist.Name).ConfigureAwait(false);
             string? coverPath = null;
-            if (detail != null && !string.IsNullOrEmpty(detail.Mid))
+            if (TerminalImageHelper.IsImageSupported)
             {
-                coverPath = await TerminalImageHelper.EnsureSingerCoverAsync(detail.Mid).ConfigureAwait(false);
-            }
-            else if (!string.IsNullOrEmpty(artist.Mid))
-            {
-                coverPath = await TerminalImageHelper.EnsureSingerCoverAsync(artist.Mid).ConfigureAwait(false);
+                if (detail != null && !string.IsNullOrEmpty(detail.Mid))
+                {
+                    coverPath = await TerminalImageHelper.EnsureSingerCoverAsync(detail.Mid).ConfigureAwait(false);
+                }
+                else if (!string.IsNullOrEmpty(artist.Mid))
+                {
+                    coverPath = await TerminalImageHelper.EnsureSingerCoverAsync(artist.Mid).ConfigureAwait(false);
+                }
             }
 
             Application.Invoke(() =>
@@ -166,8 +197,8 @@ public sealed partial class MainWindow
                     _singerCachedSongs = [.. detail.Songs];
                     _hasMoreSingerSongs = detail.Songs.Count >= 30;
 
-                    _artistAlbumDetailView.SetArtist(detail, coverPath);
-                    _artistAlbumDetailView.SetHintText("A: 歌曲/专辑  O: 热门/最新  D: 收藏");
+                    bool isFav = !string.IsNullOrEmpty(detail.Mid) && UserSession.Current.FavoriteSingers.Contains(detail.Mid);
+                    _artistAlbumDetailView.SetArtist(detail, coverPath, isFav, _singerSubMode, _singerSongOrder);
                     _artistAlbumDetailView.OnActivated();
 
                     var title = $"歌手: {detail.Name} - 热门作品 (共 {detail.Songs.Count} 首" +
@@ -212,6 +243,8 @@ public sealed partial class MainWindow
 
             Application.Invoke(() =>
             {
+                bool isFav = !string.IsNullOrEmpty(_currentSingerMid) && UserSession.Current.FavoriteSingers.Contains(_currentSingerMid);
+                _artistAlbumDetailView.UpdateSingerActions(_singerSubMode, _singerSongOrder, isFav);
                 RenderSingerAlbumsView(0);
             });
         }
@@ -223,8 +256,8 @@ public sealed partial class MainWindow
             {
                 if (_currentSingerDetail != null)
                 {
-                    _artistAlbumDetailView.SetArtist(_currentSingerDetail, _currentSingerCoverPath);
-                    _artistAlbumDetailView.SetHintText("A: 歌曲/专辑  O: 热门/最新  D: 收藏");
+                    bool isFav = !string.IsNullOrEmpty(_currentSingerMid) && UserSession.Current.FavoriteSingers.Contains(_currentSingerMid);
+                    _artistAlbumDetailView.SetArtist(_currentSingerDetail, _currentSingerCoverPath, isFav, _singerSubMode, _singerSongOrder);
                     _artistAlbumDetailView.OnActivated();
                 }
 
@@ -246,7 +279,7 @@ public sealed partial class MainWindow
     {
         if (_singerSubMode != SingerSubMode.Songs || string.IsNullOrEmpty(_currentSingerMid))
         {
-            _controlBar.UpdateStatus("[操作提示] O 键仅在歌手歌曲模式下用于切换 热门/最新");
+            _controlBar.UpdateStatus("[操作提示] 按 2 键或点击按钮切换 热门/最新 (仅在歌曲列表模式下有效)");
             return;
         }
 
@@ -266,8 +299,8 @@ public sealed partial class MainWindow
 
             if (_currentSingerDetail != null)
             {
-                _artistAlbumDetailView.SetArtist(_currentSingerDetail, _currentSingerCoverPath);
-                _artistAlbumDetailView.SetHintText("A: 歌曲/专辑  O: 热门/最新  D: 收藏");
+                bool isFav = !string.IsNullOrEmpty(_currentSingerMid) && UserSession.Current.FavoriteSingers.Contains(_currentSingerMid);
+                _artistAlbumDetailView.UpdateSingerActions(_singerSubMode, _singerSongOrder, isFav);
                 _artistAlbumDetailView.OnActivated();
             }
 
@@ -281,6 +314,33 @@ public sealed partial class MainWindow
             _songListView.SetFocusToList();
             _controlBar.UpdateStatus($"[切换成功] 已载入歌手【{_currentSingerName}】{orderText}作品共 {songs.Count} 首");
         });
+    }
+
+    public Task ToggleSingerFavoriteAsync()
+    {
+        if (string.IsNullOrEmpty(_currentSingerMid))
+        {
+            _controlBar.UpdateStatus("[操作提示] 当前未处于歌手详情页");
+            return Task.CompletedTask;
+        }
+
+        bool isFav = UserSession.Current.FavoriteSingers.Contains(_currentSingerMid);
+        if (isFav)
+        {
+            UserSession.Current.FavoriteSingers.Remove(_currentSingerMid);
+            UserSession.Current.Save();
+            _artistAlbumDetailView.UpdateSingerActions(_singerSubMode, _singerSongOrder, false);
+            _controlBar.UpdateStatus($"[已取消关注] 已取消关注歌手【{_currentSingerName}】");
+        }
+        else
+        {
+            UserSession.Current.FavoriteSingers.Add(_currentSingerMid);
+            UserSession.Current.Save();
+            _artistAlbumDetailView.UpdateSingerActions(_singerSubMode, _singerSongOrder, true);
+            _controlBar.UpdateStatus($"[已关注] 成功关注歌手【{_currentSingerName}】");
+        }
+
+        return Task.CompletedTask;
     }
 
     public async Task LoadMoreSingerSongsAsync()
@@ -409,7 +469,9 @@ public sealed partial class MainWindow
         UpdateLyricTitle($"专辑 - {albumName}");
 
         var detailTask = QqMusicApi.GetAlbumDetailInfoAsync(albumMid);
-        var coverTask = TerminalImageHelper.EnsureAlbumCoverAsync(albumMid);
+        var coverTask = TerminalImageHelper.IsImageSupported
+            ? TerminalImageHelper.EnsureAlbumCoverAsync(albumMid)
+            : Task.FromResult<string?>(null);
 
         await Task.WhenAll(detailTask, coverTask).ConfigureAwait(false);
 
@@ -420,8 +482,8 @@ public sealed partial class MainWindow
         {
             if (detail != null && _artistAlbumDetailView.Visible)
             {
-                _artistAlbumDetailView.SetAlbum(detail, coverPath);
-                _artistAlbumDetailView.SetHintText("A: 歌曲/专辑  O: 热门/最新  D: 收藏");
+                bool isSingerFav = !string.IsNullOrEmpty(_currentSingerMid) && UserSession.Current.FavoriteSingers.Contains(_currentSingerMid);
+                _artistAlbumDetailView.SetAlbumPreview(detail, coverPath, isSingerFav);
                 _artistAlbumDetailView.OnActivated();
                 SetNeedsDraw();
             }
@@ -531,7 +593,9 @@ public sealed partial class MainWindow
         _songListView.SetSongs([], $"正在加载专辑【{albumName}】背景资料与曲目...");
 
         var detailTask = QqMusicApi.GetAlbumDetailInfoAsync(albumMid);
-        var coverTask = TerminalImageHelper.EnsureAlbumCoverAsync(albumMid);
+        var coverTask = TerminalImageHelper.IsImageSupported
+            ? TerminalImageHelper.EnsureAlbumCoverAsync(albumMid)
+            : Task.FromResult<string?>(null);
 
         await Task.WhenAll(detailTask, coverTask).ConfigureAwait(false);
 
@@ -611,8 +675,8 @@ public sealed partial class MainWindow
             {
                 if (_currentSingerDetail != null)
                 {
-                    _artistAlbumDetailView.SetArtist(_currentSingerDetail, _currentSingerCoverPath);
-                    _artistAlbumDetailView.SetHintText("A: 歌曲/专辑  O: 热门/最新  D: 收藏");
+                    bool isFav = !string.IsNullOrEmpty(_currentSingerMid) && UserSession.Current.FavoriteSingers.Contains(_currentSingerMid);
+                    _artistAlbumDetailView.SetArtist(_currentSingerDetail, _currentSingerCoverPath, isFav, _singerSubMode, _singerSongOrder);
                     _artistAlbumDetailView.OnActivated();
                 }
                 var songsToRestore = snapshot.Songs.Count > 0 ? snapshot.Songs : _singerCachedSongs;
@@ -658,6 +722,37 @@ public sealed partial class MainWindow
         {
             _navigationStack.Clear();
             ShowLyricView();
+        }
+    }
+
+    private void HandleShareCurrentSong()
+    {
+        var song = _activeSong ?? _controlBar.CurrentSong;
+        if (song == null)
+        {
+            _controlBar.UpdateStatus("[提示] 当前没有正在播放的曲目");
+            return;
+        }
+
+        string text;
+        if (song.IsLocal)
+        {
+            text = $"{song.Artist} - {song.Title}\n[本地音乐] {song.LocalFilePath}";
+        }
+        else
+        {
+            var webUrl = $"https://y.qq.com/n/ryqq/songDetail/{song.Mid}";
+            text = $"{song.Artist} - {song.Title}\n{webUrl}";
+        }
+
+        bool ok = ClipboardService.SetText(text);
+        if (ok)
+        {
+            _controlBar.UpdateStatus($"已复制分享链接: {song.Artist} - {song.Title}");
+        }
+        else
+        {
+            _controlBar.UpdateStatus("[提示] 复制失败，未检测到可用剪贴板工具");
         }
     }
 }

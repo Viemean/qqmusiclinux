@@ -17,11 +17,11 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _userStatusBtn.Text = GetUserStatusText();
+                UpdateTopRightButtonsLayout();
             });
         });
         Application.Run(dlg);
-        _userStatusBtn.Text = GetUserStatusText();
+        UpdateTopRightButtonsLayout();
     }
 
     private void ShowQualityDialog()
@@ -177,16 +177,43 @@ public sealed partial class MainWindow
         }
     }
 
+    private static Scheme TransparentDialogScheme { get; } = new Scheme
+    {
+        Normal    = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextWhite, Terminal.Gui.Drawing.Color.None),
+        Focus     = new Terminal.Gui.Drawing.Attribute(Terminal.Gui.Drawing.Color.White, MikuTheme.QqGreenDark),
+        HotNormal = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuPinkAccent, Terminal.Gui.Drawing.Color.None),
+        HotFocus  = new Terminal.Gui.Drawing.Attribute(Terminal.Gui.Drawing.Color.White, MikuTheme.MikuPinkAccent),
+        Disabled  = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Terminal.Gui.Drawing.Color.None),
+        Highlight = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenPrimary, Terminal.Gui.Drawing.Color.None),
+        Active    = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenLight, MikuTheme.QqGreenDark),
+        ReadOnly  = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Terminal.Gui.Drawing.Color.None),
+        Editable  = new Terminal.Gui.Drawing.Attribute(Terminal.Gui.Drawing.Color.White, Terminal.Gui.Drawing.Color.None)
+    };
+
     private void ShowExitConfirmDialog()
     {
         bool confirmed = false;
+        int dlgW = 46;
+        int dlgH = 8;
         var dlg = new Dialog
         {
             Title = "退出确认",
-            Width = 46,
-            Height = 7
+            Width = dlgW,
+            Height = dlgH,
+            Y = Pos.Center()
         };
-        dlg.SetScheme(MikuTheme.Dialog);
+
+        if (_isNowPlayingViewActive)
+        {
+            // 在播放界面下：移动到右侧歌词视窗水平中心，彻底避开左侧大封面图层（占前 48% 宽度）
+            dlg.X = Pos.Percent(74) - (dlgW / 2);
+        }
+        else
+        {
+            dlg.X = Pos.Center();
+        }
+
+        dlg.SetScheme(TransparentDialogScheme);
 
         var msg = new Label
         {
@@ -194,49 +221,58 @@ public sealed partial class MainWindow
             X = Pos.Center(),
             Y = 1
         };
+        msg.SetScheme(TransparentDialogScheme);
         dlg.Add(msg);
 
+        // 底部居中对称摆放按钮，参考多歌手选择弹窗规范，拉开充裕间距防止字符挤压
         var yesBtn = new Button
         {
-            Text = "确定 (Y/Enter)",
-            X = Pos.Center() - 12,
-            Y = 3,
+            Text = "确定 (Enter)",
+            X = Pos.Center() - 14,
+            Y = Pos.AnchorEnd(1),
             ShadowStyle = ShadowStyles.None
         };
+        yesBtn.SetScheme(TransparentDialogScheme);
         yesBtn.Accepting += (s, e) =>
         {
             confirmed = true;
             Application.RequestStop();
         };
-        dlg.Add(yesBtn);
 
         var noBtn = new Button
         {
             Text = "取消 (Esc)",
-            X = Pos.Center() + 4,
-            Y = 3,
+            X = Pos.Center() + 2,
+            Y = Pos.AnchorEnd(1),
             ShadowStyle = ShadowStyles.None
         };
+        noBtn.SetScheme(TransparentDialogScheme);
         noBtn.Accepting += (s, e) =>
         {
             Application.RequestStop();
         };
-        dlg.Add(noBtn);
+
+        dlg.Add(yesBtn, noBtn);
 
         dlg.KeyDown += (s, k) =>
         {
-            if (k == Key.Y || k.AsRune.Value == 'y' || k.AsRune.Value == 'Y')
+            if (k == Key.Y || k.AsRune.Value == 'y' || k.AsRune.Value == 'Y' ||
+                k == Key.Enter || k.AsRune.Value == '\r' || k.AsRune.Value == '\n')
             {
                 k.Handled = true;
                 confirmed = true;
                 Application.RequestStop();
             }
-            else if (k == Key.N || k.AsRune.Value == 'n' || k.AsRune.Value == 'N' || k == Key.Esc)
+            else if (k == Key.N || k.AsRune.Value == 'n' || k.AsRune.Value == 'N' ||
+                     k == Key.Esc || k.AsRune.Value == 'q' || k.AsRune.Value == 'Q')
             {
                 k.Handled = true;
                 Application.RequestStop();
             }
         };
+
+        MikuTheme.ApplyTo(dlg, TransparentDialogScheme);
+        yesBtn.SetFocus();
 
         Application.Run(dlg);
 
@@ -246,6 +282,39 @@ public sealed partial class MainWindow
             _mprisService.Dispose();
             _player.Dispose();
             Application.RequestStop();
+        }
+    }
+
+    private bool _isAudioRecognitionActive = false;
+
+    private void ShowAudioRecognitionDialog()
+    {
+        if (_isAudioRecognitionActive) return;
+        _isAudioRecognitionActive = true;
+
+        try
+        {
+            Song? selectedSong = null;
+            using var dlg = new AudioRecognitionDialog(song =>
+            {
+                selectedSong = song;
+            }, inLyricArea: _isNowPlayingViewActive);
+
+            Application.Run(dlg);
+
+            // 等待 Dialog 完全退栈并从界面销毁后再触发播放与切换沉浸界面
+            if (selectedSong != null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await PlaySongAsync(selectedSong, 0);
+                    Application.Invoke(OpenNowPlayingView);
+                });
+            }
+        }
+        finally
+        {
+            _isAudioRecognitionActive = false;
         }
     }
 }

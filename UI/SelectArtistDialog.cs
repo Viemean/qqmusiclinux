@@ -32,14 +32,28 @@ public sealed class SelectArtistDialog : Dialog
         Editable  = new Terminal.Gui.Drawing.Attribute(Terminal.Gui.Drawing.Color.White, Terminal.Gui.Drawing.Color.None)
     };
 
-    public SelectArtistDialog(IReadOnlyList<ArtistInfo> artists, Action<ArtistInfo>? onSelected = null)
+    public SelectArtistDialog(IReadOnlyList<ArtistInfo> artists, Action<ArtistInfo>? onSelected = null, bool inLyricArea = false)
     {
         _artists = artists.ToList();
         _onSelected = onSelected;
 
         Title = "选择歌手";
-        Width = 50;
-        Height = Math.Clamp(_artists.Count + 7, 9, 16);
+        int dlgW = 46;
+        int dlgH = Math.Clamp(_artists.Count + 7, 9, 14);
+        Width = dlgW;
+        Height = dlgH;
+        Y = Pos.Center();
+
+        if (inLyricArea)
+        {
+            // 定位在右侧歌词区域水平中心，彻底避开左侧封面图层（封面占前 48% 宽度）
+            X = Pos.Percent(74) - (dlgW / 2);
+        }
+        else
+        {
+            X = Pos.Center();
+        }
+
         SetScheme(TransparentDialogScheme);
 
         var promptLabel = new Label

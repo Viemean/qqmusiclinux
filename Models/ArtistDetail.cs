@@ -10,3 +10,12 @@ public sealed record ArtistDetail(
     string Brief,
     List<Song> Songs
 );
+
+/// <summary>
+/// 歌手子模式（单曲或专辑）
+/// </summary>
+public enum SingerSubMode
+{
+    Songs,
+    Albums
+}

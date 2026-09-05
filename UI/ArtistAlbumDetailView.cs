@@ -17,9 +17,12 @@ public sealed class ArtistAlbumDetailView : View
     private readonly View _imageContainer;
     private readonly Label _titleLabel;
     private readonly Label _subLabel;
+    private readonly View _buttonBar;
+    private readonly Button _subModeBtn;
+    private readonly Button _orderBtn;
+    private readonly Button _favBtn;
     private readonly FrameView _descFrame;
     private readonly TextView _descTextView;
-    private readonly Label _hintLabel;
 
     private string? _currentImagePath;
     private object? _resizeTimerToken;
@@ -28,6 +31,9 @@ public sealed class ArtistAlbumDetailView : View
 
     public event Action? Clicked;
     public event Action<bool>? TabNavigationRequested;
+    public event Action? SubModeRequested;
+    public event Action? OrderRequested;
+    public event Action? FavoriteRequested;
 
     public void SetFocusToDesc()
     {
@@ -79,28 +85,95 @@ public sealed class ArtistAlbumDetailView : View
         _imageContainer.Add(_titleLabel, _subLabel);
         Add(_imageContainer);
 
-        _hintLabel = new Label
+        var btnScheme = new Scheme
         {
-            Text = "A: 歌曲/专辑  O: 热门/最新  D: 收藏",
+            Normal = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenPrimary, Color.None),
+            Focus = new Terminal.Gui.Drawing.Attribute(Color.Black, MikuTheme.QqGreenPrimary),
+            HotNormal = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuPinkAccent, Color.None),
+            HotFocus = new Terminal.Gui.Drawing.Attribute(Color.White, MikuTheme.MikuPinkAccent)
+        };
+
+        _buttonBar = new View
+        {
             X = Pos.Center(),
             Y = Pos.Bottom(_imageContainer),
             Height = 1,
+            Width = 28,
             CanFocus = false
         };
-        _hintLabel.SetScheme(new Scheme
+
+        _subModeBtn = new Button
         {
-            Normal = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenPrimary, Color.None),
-            Focus = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenPrimary, Color.None),
-            HotNormal = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenPrimary, Color.None)
-        });
-        Add(_hintLabel);
+            Text = "专辑 (1)",
+            X = 0,
+            Y = 0,
+            NoDecorations = true,
+            CanFocus = false,
+            ShadowStyle = ShadowStyles.None
+        };
+        _subModeBtn.TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop;
+        _subModeBtn.KeyBindings.Remove(Key.Space);
+        _subModeBtn.SetScheme(btnScheme);
+        _subModeBtn.MouseEvent += (s, m) =>
+        {
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
+            {
+                SubModeRequested?.Invoke();
+            }
+        };
+        _subModeBtn.Accepting += (s, e) => SubModeRequested?.Invoke();
+
+        _orderBtn = new Button
+        {
+            Text = "最新 (2)",
+            X = Pos.Right(_subModeBtn) + 2,
+            Y = 0,
+            NoDecorations = true,
+            CanFocus = false,
+            ShadowStyle = ShadowStyles.None
+        };
+        _orderBtn.TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop;
+        _orderBtn.KeyBindings.Remove(Key.Space);
+        _orderBtn.SetScheme(btnScheme);
+        _orderBtn.MouseEvent += (s, m) =>
+        {
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
+            {
+                OrderRequested?.Invoke();
+            }
+        };
+        _orderBtn.Accepting += (s, e) => OrderRequested?.Invoke();
+
+        _favBtn = new Button
+        {
+            Text = "关注 (3)",
+            X = Pos.Right(_orderBtn) + 2,
+            Y = 0,
+            NoDecorations = true,
+            CanFocus = false,
+            ShadowStyle = ShadowStyles.None
+        };
+        _favBtn.TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop;
+        _favBtn.KeyBindings.Remove(Key.Space);
+        _favBtn.SetScheme(btnScheme);
+        _favBtn.MouseEvent += (s, m) =>
+        {
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
+            {
+                FavoriteRequested?.Invoke();
+            }
+        };
+        _favBtn.Accepting += (s, e) => FavoriteRequested?.Invoke();
+
+        _buttonBar.Add(_subModeBtn, _orderBtn, _favBtn);
+        Add(_buttonBar);
 
         // 2. 下半部分：富文本简介框架
         _descFrame = new FrameView
         {
             Title = "简介",
             X = 0,
-            Y = Pos.Bottom(_hintLabel),
+            Y = Pos.Bottom(_buttonBar),
             Width = Dim.Fill(),
             Height = Dim.Fill(),
             CanFocus = true
@@ -184,16 +257,34 @@ public sealed class ArtistAlbumDetailView : View
 
     public void SetHintText(string text)
     {
-        _hintLabel.Text = text;
+        // 兼容接口，实际状态由实体按钮动态呈现
+    }
+
+    public void UpdateSingerActions(SingerSubMode subMode, int order, bool isFavorite)
+    {
+        _subModeBtn.Visible = true;
+        _orderBtn.Visible = subMode == SingerSubMode.Songs;
+        _favBtn.Visible = true;
+
+        _subModeBtn.Text = subMode == SingerSubMode.Songs ? "专辑 (1)" : "歌曲 (1)";
+        _orderBtn.Text = order == 1 ? "最新 (2)" : "热门 (2)";
+        _favBtn.Text = isFavorite ? "已关注 (3)" : "关注 (3)";
+
+        _subModeBtn.X = 0;
+        _orderBtn.X = Pos.Right(_subModeBtn) + 2;
+        _favBtn.X = subMode == SingerSubMode.Songs ? Pos.Right(_orderBtn) + 2 : Pos.Right(_subModeBtn) + 2;
+        _buttonBar.Width = subMode == SingerSubMode.Songs ? 28 : 18;
+
         SetNeedsLayout();
     }
 
-    public void SetArtist(ArtistDetail detail, string? imagePath)
+    public void SetArtist(ArtistDetail detail, string? imagePath, bool isFavorite = false, SingerSubMode subMode = SingerSubMode.Songs, int order = 1)
     {
         _currentImagePath = imagePath;
         _titleLabel.Text = detail.Name;
         _subLabel.Text = $"歌手 · {detail.Songs.Count} 首热门单曲";
-        _hintLabel.Text = "A: 歌曲/专辑  S: 热门/最新  D: 收藏";
+
+        UpdateSingerActions(subMode, order, isFavorite);
 
         var brief = string.IsNullOrWhiteSpace(detail.Brief) ? "暂无歌手简介资料。" : detail.Brief.Trim();
         _descFrame.Title = "歌手简介";
@@ -202,12 +293,45 @@ public sealed class ArtistAlbumDetailView : View
         TriggerImageRenderDelayed();
     }
 
-    public void SetAlbum(AlbumDetail detail, string? imagePath)
+    /// <summary>
+    /// 在歌手的专辑列表模式下预览当前高亮的专辑（保持 歌曲(1) 和 关注(3) 稳定常驻）
+    /// </summary>
+    public void SetAlbumPreview(AlbumDetail detail, string? imagePath, bool isSingerFavorite)
     {
         _currentImagePath = imagePath;
         _titleLabel.Text = detail.Name;
         _subLabel.Text = $"{detail.Artist} · {detail.Songs.Count} 首歌曲";
-        _hintLabel.Text = "D: 收藏专辑";
+
+        _subModeBtn.Visible = true;
+        _subModeBtn.Text = "歌曲 (1)";
+        _orderBtn.Visible = false;
+        _favBtn.Visible = true;
+        _favBtn.Text = isSingerFavorite ? "已关注 (3)" : "关注 (3)";
+
+        _subModeBtn.X = 0;
+        _favBtn.X = Pos.Right(_subModeBtn) + 2;
+        _buttonBar.Width = 18;
+
+        var desc = string.IsNullOrWhiteSpace(detail.Description) ? "暂无专辑详细背景资料。" : detail.Description.Trim();
+        _descFrame.Title = "专辑介绍";
+        _descTextView.Text = $"专辑：{detail.Name}\n歌手：{detail.Artist}\n发行：{detail.PublishDate}\n公司：{detail.Company}\n曲目：{detail.Songs.Count} 首歌曲\n\n{desc}";
+
+        TriggerImageRenderDelayed();
+        SetNeedsLayout();
+    }
+
+    public void SetAlbum(AlbumDetail detail, string? imagePath, bool isFavorite = false)
+    {
+        _currentImagePath = imagePath;
+        _titleLabel.Text = detail.Name;
+        _subLabel.Text = $"{detail.Artist} · {detail.Songs.Count} 首歌曲";
+
+        _subModeBtn.Visible = false;
+        _orderBtn.Visible = false;
+        _favBtn.Visible = true;
+        _favBtn.Text = isFavorite ? "已收藏 (3)" : "收藏 (3)";
+        _favBtn.X = 0;
+        _buttonBar.Width = 10;
 
         var desc = string.IsNullOrWhiteSpace(detail.Description) ? "暂无专辑详细背景资料。" : detail.Description.Trim();
         _descFrame.Title = "专辑介绍";
