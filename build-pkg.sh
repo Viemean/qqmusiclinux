@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 默认参数
+# 入参：版本号、包构建号、目标架构、.NET Runtime ID (RID)
 VERSION="${1:-0.1.0}"
 PKGREL="${2:-1}"
-ARCH="x86_64"
+ARCH="${3:-x86_64}"
+RID="${4:-linux-x64}"
 PKGNAME="qqmusic-tui-bin"
 OUTPUT_FILE="${PKGNAME}-${VERSION}-${PKGREL}-${ARCH}.pkg.tar.zst"
 
-echo "==> Building native AOT binary for ${ARCH}..."
-dotnet publish -c Release QQMusic.Tui.csproj
+echo "==> Building native AOT binary for ${ARCH} (${RID})..."
+dotnet publish -c Release -r "${RID}" QQMusic.Tui.csproj
 
-BIN_PATH="bin/Release/net10.0/linux-x64/publish/QQMusic.Tui"
+BIN_PATH="bin/Release/net10.0/${RID}/publish/QQMusic.Tui"
 if [ ! -f "$BIN_PATH" ]; then
     echo "Error: Binary not found at $BIN_PATH"
     exit 1

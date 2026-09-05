@@ -38,53 +38,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgstreamer1.0-dev clang zstd
 
-      - name: Build Native AOT (${{ matrix.arch }})
+      - name: Build and Package Arch Linux ZST (${{ matrix.arch }})
         run: |
-          dotnet publish -c Release -r ${{ matrix.rid }} QQMusic.Tui.csproj
-
-      - name: Package Arch Linux ZST (${{ matrix.arch }})
-        run: |
+          chmod +x ./build-pkg.sh
           VERSION="${GITHUB_REF_NAME#v}"
           if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
             VERSION="0.1.0"
           fi
-          PKGREL="1"
-          ARCH="${{ matrix.arch }}"
-          PKGNAME="qqmusic-tui-bin"
-          OUTPUT_FILE="${PKGNAME}-${VERSION}-${PKGREL}-${ARCH}.pkg.tar.zst"
-
-          BIN_PATH="bin/Release/net10.0/${{ matrix.rid }}/publish/QQMusic.Tui"
-          STAGE_DIR=$(mktemp -d)
-
-          mkdir -p "$STAGE_DIR/usr/bin"
-          cp "$BIN_PATH" "$STAGE_DIR/usr/bin/qqmusic-tui"
-          chmod 755 "$STAGE_DIR/usr/bin/qqmusic-tui"
-
-          INSTALLED_SIZE=$(du -sb "$STAGE_DIR/usr" | awk '{print $1}')
-          BUILD_DATE=$(date +%s)
-
-          cat << EOF > "$STAGE_DIR/.PKGINFO"
-pkgname = ${PKGNAME}
-pkgbase = ${PKGNAME}
-pkgver = ${VERSION}-${PKGREL}
-pkgdesc = Linux terminal QQ Music player (.NET 10 Native AOT pre-built package)
-url = https://github.com/Viemean/qqmusiclinux/tree/tui
-builddate = ${BUILD_DATE}
-packager = GitHub Actions <actions@github.com>
-size = ${INSTALLED_SIZE}
-arch = ${ARCH}
-license = MIT
-depend = gstreamer
-depend = gst-plugins-base
-depend = gst-plugins-good
-optdepend = ffmpeg: cover art extraction and display
-optdepend = imagemagick: rounded corner cover rendering
-provides = qqmusic-tui
-conflict = qqmusic-tui
-EOF
-
-          tar -C "$STAGE_DIR" -c --zstd -f "$OUTPUT_FILE" .PKGINFO usr
-          echo "Built: $OUTPUT_FILE"
+          ./build-pkg.sh "$VERSION" 1 "${{ matrix.arch }}" "${{ matrix.rid }}"
 
       - name: Upload Package Artifact
         uses: actions/upload-artifact@v4
