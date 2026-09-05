@@ -39,6 +39,8 @@ public sealed partial class MainWindow : Window
     private readonly Button _recognizeBtn;
     private readonly NowPlayingView _nowPlayingView;
     private bool _isNowPlayingViewActive = false;
+    private readonly AodView _aodView;
+    private bool _isAodMode = false;
     private bool _isSearchActive = false;
     private long _lastTransClickTicks;
     private readonly Label _lyricTransBtn;
@@ -784,7 +786,6 @@ public sealed partial class MainWindow : Window
             {
                 _songListTitleLabel.Text = $"┤{title}├";
                 _songListTitleLabel.SetNeedsDraw();
-                _songListView.SetNeedsDraw();
             });
         };
 
@@ -836,6 +837,11 @@ public sealed partial class MainWindow : Window
             Application.Invoke(UpdateFrameBorderHighlights);
         };
         Add(_nowPlayingView);
+        _aodView = new AodView
+        {
+            Visible = false
+        };
+        Add(_aodView);
         _controlBar.NowPlayingClicked += ToggleNowPlayingView;
 
         // 窗口整体尺寸改变时同步更新沉浸式播放界面的封面或详情页写真
@@ -872,6 +878,26 @@ public sealed partial class MainWindow : Window
             var focused = Application.Navigation?.GetFocused();
             if (focused is TextField tf && tf != _searchField)
             {
+                return;
+            }
+
+            // 2.5. AOD 后台息屏模式：界面停止响应除 Esc（退出后台模式）和 Q/q（退出确认弹窗）之外的全部全局按键
+            if (_isAodMode)
+            {
+                if (k == Key.Esc)
+                {
+                    k.Handled = true;
+                    ExitAodMode();
+                    return;
+                }
+                if (k.AsRune.Value == 'q' || k.AsRune.Value == 'Q')
+                {
+                    k.Handled = true;
+                    ShowExitConfirmDialog();
+                    return;
+                }
+
+                k.Handled = true;
                 return;
             }
 
@@ -942,6 +968,10 @@ public sealed partial class MainWindow : Window
                 else if (_currentDrilldownAlbum != null)
                 {
                     await LoadFavoriteAlbumsAsync();
+                }
+                else
+                {
+                    EnterAodMode();
                 }
                 return;
             }
@@ -1791,5 +1821,71 @@ public sealed partial class MainWindow : Window
             _artistAlbumDetailView.OnActivated();
         }
         SetNeedsDraw();
+    }
+
+    private void EnterAodMode()
+    {
+        _isAodMode = true;
+        _songListView.SetMarqueePaused(true);
+
+        _sidebarFrame.Visible = false;
+        _songListView.Visible = false;
+        _lyricFrame.Visible = false;
+        _searchLabel.Visible = false;
+        _searchField.Visible = false;
+        _userStatusBtn.Visible = false;
+        _recognizeBtn.Visible = false;
+        _controlBar.Visible = false;
+        _hotkeyHintLabel.Visible = false;
+        _sidebarTitleLabel.Visible = false;
+        _songListTitleLabel.Visible = false;
+        _lyricTitleLabel.Visible = false;
+        _nowPlayingView.Visible = false;
+        _artistAlbumDetailView.Visible = false;
+
+        _aodView.UpdateSong(_activeSong);
+        _aodView.Visible = true;
+        _aodView.SetFocus();
+        SetNeedsDraw();
+        AppLogger.Info("MainWindow", "Entered AOD background display mode");
+    }
+
+    private void ExitAodMode()
+    {
+        _isAodMode = false;
+        _aodView.Visible = false;
+        _songListView.SetMarqueePaused(false);
+
+        if (_isNowPlayingViewActive)
+        {
+            _nowPlayingView.Visible = true;
+            _nowPlayingView.OnActivated();
+        }
+        else
+        {
+            _sidebarFrame.Visible = true;
+            _songListView.Visible = true;
+            _lyricFrame.Visible = true;
+            _searchLabel.Visible = !_isImmersiveMode;
+            _searchField.Visible = !_isImmersiveMode;
+            _userStatusBtn.Visible = !_isImmersiveMode;
+            _recognizeBtn.Visible = !_isImmersiveMode;
+            _sidebarTitleLabel.Visible = true;
+            _songListTitleLabel.Visible = true;
+            _lyricTitleLabel.Visible = true;
+            if (_artistAlbumDetailView.Visible)
+            {
+                _artistAlbumDetailView.OnActivated();
+            }
+            _songListView.SetFocusToList();
+        }
+
+        _controlBar.Visible = !_isImmersiveMode;
+        _hotkeyHintLabel.Visible = !_isImmersiveMode;
+
+        UpdatePlayerStatus();
+        UpdateFrameBorderHighlights();
+        SetNeedsDraw();
+        AppLogger.Info("MainWindow", "Exited AOD background display mode");
     }
 }

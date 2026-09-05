@@ -56,8 +56,15 @@ public sealed partial class SongListView : FrameView
     private object? _viewportResizeTimerToken;
     private object? _loadMoreDebounceToken;
     private string _currentFullTitle = "歌曲列表 (就绪)";
+    private string _lastDispatchedTitle = "";
     private int _marqueeOffset = 0;
+    private bool _isMarqueePaused = false;
     private object? _timeoutToken;
+
+    public void SetMarqueePaused(bool paused)
+    {
+        _isMarqueePaused = paused;
+    }
 
     private Func<int, Task>? _customItemAccepted;
     private Action<int>? _customItemSelectionChanged;

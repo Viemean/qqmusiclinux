@@ -10,7 +10,7 @@ public sealed partial class SongListView
 {
     private bool OnMarqueeTick()
     {
-        if (string.IsNullOrEmpty(_currentFullTitle)) return true;
+        if (_isMarqueePaused || string.IsNullOrEmpty(_currentFullTitle)) return true;
 
         int curWidth = Viewport.Width > 0 ? Viewport.Width : Frame.Width;
         int maxW = Math.Max(12, curWidth - 4);
@@ -18,15 +18,23 @@ public sealed partial class SongListView
 
         if (textW <= maxW)
         {
-            _marqueeOffset = 0;
-            DisplayTitleChanged?.Invoke(_currentFullTitle);
+            if (_lastDispatchedTitle != _currentFullTitle)
+            {
+                _lastDispatchedTitle = _currentFullTitle;
+                _marqueeOffset = 0;
+                DisplayTitleChanged?.Invoke(_currentFullTitle);
+            }
             return true;
         }
 
         string loopText = _currentFullTitle + "        ";
         _marqueeOffset = (_marqueeOffset + 1) % loopText.Length;
         var slice = GetMarqueeSlice(loopText, _marqueeOffset, maxW);
-        DisplayTitleChanged?.Invoke(slice);
+        if (_lastDispatchedTitle != slice)
+        {
+            _lastDispatchedTitle = slice;
+            DisplayTitleChanged?.Invoke(slice);
+        }
 
         return true;
     }
@@ -44,12 +52,14 @@ public sealed partial class SongListView
 
         if (textW <= maxW)
         {
+            _lastDispatchedTitle = fullText;
             DisplayTitleChanged?.Invoke(fullText);
         }
         else
         {
             string loopText = fullText + "        ";
             var slice = GetMarqueeSlice(loopText, 0, maxW);
+            _lastDispatchedTitle = slice;
             DisplayTitleChanged?.Invoke(slice);
         }
     }

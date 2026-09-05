@@ -50,6 +50,7 @@ public sealed partial class MainWindow
             _controlBar.SetCurrentSong(song);
             _controlBar.SetLocalMode(song.IsLocal);
             _controlBar.SetFavoriteStatus(isFav);
+            _aodView.UpdateSong(song);
         });
 
         // 切歌时先停止旧播放并清空旧歌词，杜绝时间戳定时器与歌词列表索引竞争闪退
@@ -474,6 +475,20 @@ public sealed partial class MainWindow
     {
         if (_activeSong == null || _activeSong.Duration <= 0) return;
 
+        // AOD 后台息屏模式：仅在后台同步 D-Bus 位置与防抖持久化，坚决不触发前台界面控件重绘
+        if (_isAodMode)
+        {
+            _mprisService.UpdatePosition(currentSec);
+            UserSession.Current.LastPlaybackPositionSeconds = currentSec;
+            UserSession.Current.LastPlayedSong = _activeSong;
+            if (Environment.TickCount64 - _lastProgressSaveTick > 5000)
+            {
+                _lastProgressSaveTick = Environment.TickCount64;
+                UserSession.Current.Save();
+            }
+            return;
+        }
+
         var cur = TimeSpan.FromSeconds(currentSec);
         var total = TimeSpan.FromSeconds(_activeSong.Duration);
         var progressPercent = Math.Clamp(currentSec / _activeSong.Duration, 0, 1);
@@ -492,6 +507,7 @@ public sealed partial class MainWindow
 
     private void UpdateLyrics(double currentSec)
     {
+        if (_isAodMode) return; // AOD 模式彻底冻结歌词计算与渲染
         _nowPlayingView.UpdatePlaybackTime(currentSec);
         if (_currentLyrics.Count == 0) return;
 
