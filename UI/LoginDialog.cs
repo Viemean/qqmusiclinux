@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
@@ -6,6 +7,7 @@ using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using QQMusic.Tui.Api;
 using QQMusic.Tui.Models;
+using QQMusic.Tui.Services;
 
 namespace QQMusic.Tui.UI;
 
@@ -13,10 +15,12 @@ public sealed class LoginDialog : Dialog
 {
     private readonly Action _onLoginSuccess;
     private readonly CancellationTokenSource _cts = new();
+    private LoginHttpServer? _httpServer;
 
     private readonly View _qrContainer;
     private readonly Label _qrStatusLabel;
     private readonly Label _qrTipLabel;
+    private readonly Button _openBrowserBtn;
     private readonly ListView _qrView;
 
     private readonly View _cookieContainer;
@@ -28,7 +32,7 @@ public sealed class LoginDialog : Dialog
         _onLoginSuccess = onLoginSuccess;
 
         Title = "用户登录";
-        Width = 60;
+        Width = 62;
         Height = 28;
         SetScheme(MikuTheme.Dialog);
 
@@ -93,9 +97,26 @@ public sealed class LoginDialog : Dialog
         {
             Text = "提示: 手机扫码授权后将自动同步",
             X = 2,
-            Y = 21
+            Y = 21,
+            Width = Dim.Fill(2)
         };
         _qrContainer.Add(_qrTipLabel);
+
+        _openBrowserBtn = new Button
+        {
+            Text = "浏览器打开 (B)",
+            X = 2,
+            Y = 22,
+            Visible = false
+        };
+        _openBrowserBtn.Accepting += (s, e) =>
+        {
+            if (_httpServer != null && _httpServer.IsRunning)
+            {
+                TryOpenBrowser(_httpServer.Url);
+            }
+        };
+        _qrContainer.Add(_openBrowserBtn);
 
         Add(_qrContainer);
 
@@ -188,6 +209,10 @@ public sealed class LoginDialog : Dialog
             {
                 CloseSelf();
             }
+            else if ((k.AsRune.Value == 'b' || k.AsRune.Value == 'B') && _httpServer != null && _httpServer.IsRunning)
+            {
+                TryOpenBrowser(_httpServer.Url);
+            }
         };
 
         // 启动二维码生成与轮询
@@ -210,11 +235,27 @@ public sealed class LoginDialog : Dialog
                 return;
             }
 
+            // 终端不支持图片协议时，启动本地轻量 HTTP 服务协同网页扫码
+            if (!TerminalImageHelper.IsImageSupported)
+            {
+                _httpServer ??= new LoginHttpServer();
+                _httpServer.Start(qr.PngBytes);
+            }
+
             Application.Invoke(() =>
             {
                 _qrStatusLabel.Text = "状态: 等待手机扫码...";
                 _qrView.SetSource(new ObservableCollection<string>(qr.AsciiLines));
-                _qrTipLabel.Text = "可手机扫码，或打开: /tmp/qqmusic_login_qr.png";
+                if (_httpServer != null && _httpServer.IsRunning)
+                {
+                    _qrTipLabel.Text = $"网页扫码: {_httpServer.Url} (按 B 打开)";
+                    _openBrowserBtn.Visible = true;
+                }
+                else
+                {
+                    _qrTipLabel.Text = "可手机扫码，或打开: /tmp/qqmusic_login_qr.png";
+                    _openBrowserBtn.Visible = false;
+                }
             });
 
             // 轮询状态
@@ -225,6 +266,7 @@ public sealed class LoginDialog : Dialog
 
                 if (status.Code == 0) // 成功
                 {
+                    _httpServer?.Stop();
                     Application.Invoke(() =>
                     {
                         _qrStatusLabel.Text = $"状态[0]: 登录成功 [{UserSession.Current.Nick}]";
@@ -243,9 +285,11 @@ public sealed class LoginDialog : Dialog
                 }
                 else if (status.Code == 65) // 失效
                 {
+                    _httpServer?.Stop();
                     Application.Invoke(() =>
                     {
                         _qrStatusLabel.Text = "状态[65]: 二维码已失效，请重新打开登录窗口";
+                        _openBrowserBtn.Visible = false;
                     });
                     break;
                 }
@@ -260,8 +304,47 @@ public sealed class LoginDialog : Dialog
         }, _cts.Token);
     }
 
+    private static void TryOpenBrowser(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            using var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "xdg-open",
+                Arguments = $"\"{url}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+        }
+        catch
+        {
+            try
+            {
+                using var proc = Process.Start(new ProcessStartInfo
+                {
+                    FileName = url,
+                    UseShellExecute = true
+                });
+            }
+            catch
+            {
+                // Ignore headless or browser missing error
+            }
+        }
+    }
+
     private void CloseSelf()
     {
+        try
+        {
+            _httpServer?.Dispose();
+            _httpServer = null;
+        }
+        catch
+        {
+        }
+
         try
         {
             _cts.Cancel();
@@ -271,5 +354,26 @@ public sealed class LoginDialog : Dialog
         }
 
         Application.RequestStop();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            try
+            {
+                _httpServer?.Dispose();
+                _httpServer = null;
+            }
+            catch {}
+
+            try
+            {
+                _cts.Cancel();
+                _cts.Dispose();
+            }
+            catch {}
+        }
+        base.Dispose(disposing);
     }
 }

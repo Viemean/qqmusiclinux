@@ -80,23 +80,26 @@ public sealed class NowPlayingView : View
         Visible = false;
         CanFocus = true;
 
-        // 1. 左侧面板：纯净无边框封面容器
+        bool isImageSupported = TerminalImageHelper.IsImageSupported;
+
+        // 1. 左侧面板：纯净无边框封面容器 (终端支持图片显示协议时显示并占 48% 宽度；不支持时完全隐藏)
         _coverContainer = new View
         {
             X = 0,
             Y = 0,
-            Width = Dim.Percent(48),
+            Width = isImageSupported ? Dim.Percent(48) : 0,
             Height = Dim.Fill(),
-            CanFocus = true
+            CanFocus = isImageSupported,
+            Visible = isImageSupported
         };
 
-        // 不支持图形协议时的专业提示
+        // 不支持图形协议时的提示标签 (在无图终端模式下直接隐藏左侧区域，无需占位显示)
         _unsupportedLabel1 = new Label
         {
             Text = "[ 当前终端不支持图形协议 ]",
             X = Pos.Center(),
             Y = Pos.Center() - 1,
-            Visible = !TerminalImageHelper.IsImageSupported
+            Visible = false
         };
         _unsupportedLabel1.SetScheme(MikuTheme.PlayerBar);
 
@@ -105,7 +108,7 @@ public sealed class NowPlayingView : View
             Text = "建议切换支持 Kitty 图像协议的终端",
             X = Pos.Center(),
             Y = Pos.Center() + 1,
-            Visible = !TerminalImageHelper.IsImageSupported
+            Visible = false
         };
         _unsupportedLabel2.SetScheme(MikuTheme.Base);
 
@@ -114,7 +117,7 @@ public sealed class NowPlayingView : View
             Text = "(如 Kitty / WezTerm / Ghostty)",
             X = Pos.Center(),
             Y = Pos.Center() + 2,
-            Visible = !TerminalImageHelper.IsImageSupported
+            Visible = false
         };
         _unsupportedLabel3.SetScheme(MikuTheme.Base);
 
@@ -207,10 +210,10 @@ public sealed class NowPlayingView : View
         _coverContainer.Add(_songInfoContainer);
         Add(_coverContainer);
 
-        // 2. 右侧面板：纯净无边框大视窗歌词
+        // 2. 右侧面板：纯净无边框大视窗歌词 (无图终端模式下占满全宽并水平居中歌词)
         _lyricContainer = new View
         {
-            X = Pos.Right(_coverContainer),
+            X = isImageSupported ? Pos.Right(_coverContainer) : 0,
             Y = 0,
             Width = Dim.Fill(),
             Height = Dim.Fill(),
@@ -440,9 +443,10 @@ public sealed class NowPlayingView : View
         TriggerImmersiveActivity();
         TriggerInteractiveActivity();
 
-        if (_isImmersiveMode)
+        if (_isImmersiveMode || !TerminalImageHelper.IsImageSupported)
         {
-            // 沉浸模式下自动取消选中歌手/专辑，需要取消沉浸模式才可以选择
+            // 沉浸模式或无图全宽歌词模式下（封面容器已隐藏）：直接流转至底部控制栏
+            FocusControlBarRequested?.Invoke();
             return;
         }
 

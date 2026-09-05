@@ -44,6 +44,21 @@ public static class TerminalImageHelper
         {
             if (s_isImageSupported.HasValue) return s_isImageSupported.Value;
 
+            // 0. 允许通过环境变量显式禁用或强制开启图片支持 (用于调试或特定终端覆盖)
+            var disableEnv = Environment.GetEnvironmentVariable("QQMUSIC_DISABLE_IMAGE") ?? Environment.GetEnvironmentVariable("QQMUSIC_NO_IMAGE");
+            if (disableEnv == "1" || disableEnv?.Equals("true", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                s_isImageSupported = false;
+                return false;
+            }
+
+            var forceEnv = Environment.GetEnvironmentVariable("QQMUSIC_FORCE_IMAGE");
+            if (forceEnv == "1" || forceEnv?.Equals("true", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                s_isImageSupported = true;
+                return true;
+            }
+
             // 1. 探测 Kitty 环境变量
             var kittyWindowId = Environment.GetEnvironmentVariable("KITTY_WINDOW_ID");
             var kittyPid = Environment.GetEnvironmentVariable("KITTY_PID");
