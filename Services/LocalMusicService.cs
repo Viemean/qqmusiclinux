@@ -530,7 +530,7 @@ public static class LocalMusicService
     /// </summary>
     public static async Task<string?> EnsureCoverAsync(Song song)
     {
-        if (string.IsNullOrEmpty(song.LocalFilePath) || !File.Exists(song.LocalFilePath))
+        if (!TerminalImageHelper.IsImageSupported || string.IsNullOrEmpty(song.LocalFilePath) || !File.Exists(song.LocalFilePath))
         {
             return null;
         }

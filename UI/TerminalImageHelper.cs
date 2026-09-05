@@ -179,7 +179,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureAlbumCoverAsync(string albumMid)
     {
-        if (string.IsNullOrWhiteSpace(albumMid)) return null;
+        if (!IsImageSupported || string.IsNullOrWhiteSpace(albumMid)) return null;
 
         var pngFile = Path.Combine(s_cacheDir, $"{albumMid}.png");
         if (File.Exists(pngFile))
@@ -226,7 +226,7 @@ public static class TerminalImageHelper
             return null;
         }
 
-        // 应用平滑 6px 圆角遮罩处理
+        // 应用平滑 6px 圆角遮罩处理（无外扩阴影）
         var processed = await ApplyRoundedCornersAsync(localFile, pngFile);
         return processed ?? localFile;
     }
@@ -236,7 +236,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureLocalImageProcessedAsync(string localRawImagePath, string cacheKey)
     {
-        if (string.IsNullOrWhiteSpace(localRawImagePath) || !File.Exists(localRawImagePath)) return null;
+        if (!IsImageSupported || string.IsNullOrWhiteSpace(localRawImagePath) || !File.Exists(localRawImagePath)) return null;
 
         var pngFile = Path.Combine(s_cacheDir, $"local_{cacheKey}.png");
         if (File.Exists(pngFile))
@@ -257,7 +257,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureSingerCoverAsync(string singerMid)
     {
-        if (string.IsNullOrWhiteSpace(singerMid)) return null;
+        if (!IsImageSupported || string.IsNullOrWhiteSpace(singerMid)) return null;
 
         var pngFile = Path.Combine(s_cacheDir, $"singer_{singerMid}.png");
         if (File.Exists(pngFile))
@@ -305,7 +305,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureSingleCoverAsync(string songMid, string vsMid)
     {
-        if (string.IsNullOrWhiteSpace(songMid) || string.IsNullOrWhiteSpace(vsMid)) return null;
+        if (!IsImageSupported || string.IsNullOrWhiteSpace(songMid) || string.IsNullOrWhiteSpace(vsMid)) return null;
 
         var pngFile = Path.Combine(s_cacheDir, $"single_{songMid}.png");
         if (File.Exists(pngFile))
@@ -357,7 +357,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureSongCoverAsync(Song? song)
     {
-        if (song == null) return null;
+        if (!IsImageSupported || song == null) return null;
 
         if (song.IsLocal)
         {
@@ -486,7 +486,7 @@ public static class TerminalImageHelper
     /// <param name="rows">占据行高</param>
     public static void RenderKittyImage(string filePath, int col, int row, int cols, int rows)
     {
-        if (string.IsNullOrEmpty(filePath) || cols <= 0 || rows <= 0) return;
+        if (!IsImageSupported || string.IsNullOrEmpty(filePath) || cols <= 0 || rows <= 0) return;
 
         try
         {
@@ -627,6 +627,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static void ClearImages()
     {
+        if (!IsImageSupported) return;
         try
         {
             byte[] cmd = Encoding.ASCII.GetBytes("\x1b_Ga=d,d=a\x1b\\");

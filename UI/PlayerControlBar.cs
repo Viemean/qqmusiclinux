@@ -16,6 +16,7 @@ public sealed class PlayerControlBar : FrameView
 {
     private readonly Label _nowPlayingLabel;
     private readonly Button _favBtn;
+    private readonly Button _shareBtn;
     private readonly Button _qualityBtn;
     private readonly Button _downloadBtn;
     private readonly Button _modeBtn;
@@ -36,7 +37,7 @@ public sealed class PlayerControlBar : FrameView
     private string _persistentPlaybackStatus = "暂无播放曲目";
     private object? _temporaryStatusTimeout;
 
-    private int _focusedControlIndex = 4;
+    private int _focusedControlIndex = 5;
     private bool _isAdjustingProgress = false;
     private double _currentPositionSeconds = 0;
     private double _totalDurationSeconds = 0;
@@ -48,6 +49,7 @@ public sealed class PlayerControlBar : FrameView
     public Song? CurrentSong => _currentSong;
 
     public event Action? FavoriteClicked;
+    public event Action? ShareClicked;
     public event Action? QualityClicked;
     public event Action? DownloadClicked;
     public event Action? ModeClicked;
@@ -69,7 +71,7 @@ public sealed class PlayerControlBar : FrameView
     {
         if (_focusedControlIndex == 0 && !_isAdjustingProgress)
         {
-            _focusedControlIndex = 4;
+            _focusedControlIndex = 5;
         }
         SetFocus();
         UpdateControlHighlight();
@@ -149,7 +151,7 @@ public sealed class PlayerControlBar : FrameView
         _volumeIncBtn.KeyBindings.Remove(Key.Space);
         _volumeIncBtn.Accepting += (s, e) =>
         {
-            _focusedControlIndex = 10;
+            _focusedControlIndex = 11;
             UpdateControlHighlight();
             VolumeAdjustRequested?.Invoke(10);
         };
@@ -167,7 +169,7 @@ public sealed class PlayerControlBar : FrameView
         _volumeBtn.KeyBindings.Remove(Key.Space);
         _volumeBtn.Accepting += (s, e) =>
         {
-            _focusedControlIndex = 9;
+            _focusedControlIndex = 10;
             UpdateControlHighlight();
             VolumeMuteToggled?.Invoke();
         };
@@ -175,14 +177,14 @@ public sealed class PlayerControlBar : FrameView
         {
             if (m.Flags.HasFlag(MouseFlags.WheeledUp))
             {
-                _focusedControlIndex = 9;
+                _focusedControlIndex = 10;
                 UpdateControlHighlight();
                 VolumeAdjustRequested?.Invoke(5);
                 m.Handled = true;
             }
             else if (m.Flags.HasFlag(MouseFlags.WheeledDown))
             {
-                _focusedControlIndex = 9;
+                _focusedControlIndex = 10;
                 UpdateControlHighlight();
                 VolumeAdjustRequested?.Invoke(-5);
                 m.Handled = true;
@@ -192,7 +194,7 @@ public sealed class PlayerControlBar : FrameView
                      m.Flags.HasFlag(MouseFlags.MiddleButtonClicked) ||
                      m.Flags.HasFlag(MouseFlags.MiddleButtonPressed))
             {
-                _focusedControlIndex = 9;
+                _focusedControlIndex = 10;
                 UpdateControlHighlight();
                 var now = Environment.TickCount64;
                 if (now - _lastMuteClickTicks > 250)
@@ -217,7 +219,7 @@ public sealed class PlayerControlBar : FrameView
         _volumeDecBtn.KeyBindings.Remove(Key.Space);
         _volumeDecBtn.Accepting += (s, e) =>
         {
-            _focusedControlIndex = 8;
+            _focusedControlIndex = 9;
             UpdateControlHighlight();
             VolumeAdjustRequested?.Invoke(-10);
         };
@@ -236,7 +238,7 @@ public sealed class PlayerControlBar : FrameView
         _downloadBtn.KeyBindings.Remove(Key.Space);
         _downloadBtn.Accepting += (s, e) =>
         {
-            _focusedControlIndex = 7;
+            _focusedControlIndex = 8;
             UpdateControlHighlight();
             if (!_isLocalMode)
             {
@@ -258,7 +260,7 @@ public sealed class PlayerControlBar : FrameView
         _qualityBtn.KeyBindings.Remove(Key.Space);
         _qualityBtn.Accepting += (s, e) =>
         {
-            _focusedControlIndex = 6;
+            _focusedControlIndex = 7;
             UpdateControlHighlight();
             QualityClicked?.Invoke();
         };
@@ -330,7 +332,7 @@ public sealed class PlayerControlBar : FrameView
         _nextBtn.KeyBindings.Remove(Key.Space);
         _nextBtn.Accepting += (s, e) =>
         {
-            _focusedControlIndex = 5;
+            _focusedControlIndex = 6;
             UpdateControlHighlight();
             NextClicked?.Invoke();
         };
@@ -348,7 +350,7 @@ public sealed class PlayerControlBar : FrameView
         _playPauseBtn.KeyBindings.Remove(Key.Space);
         _playPauseBtn.Accepting += (s, e) =>
         {
-            _focusedControlIndex = 4;
+            _focusedControlIndex = 5;
             UpdateControlHighlight();
             PlayPauseClicked?.Invoke();
         };
@@ -366,7 +368,7 @@ public sealed class PlayerControlBar : FrameView
         _prevBtn.KeyBindings.Remove(Key.Space);
         _prevBtn.Accepting += (s, e) =>
         {
-            _focusedControlIndex = 3;
+            _focusedControlIndex = 4;
             UpdateControlHighlight();
             PrevClicked?.Invoke();
         };
@@ -385,11 +387,30 @@ public sealed class PlayerControlBar : FrameView
         _modeBtn.KeyBindings.Remove(Key.Space);
         _modeBtn.Accepting += (s, e) =>
         {
-            _focusedControlIndex = 2;
+            _focusedControlIndex = 3;
             UpdateControlHighlight();
             ModeClicked?.Invoke();
         };
         Add(_modeBtn);
+
+        // 分享按钮 - 放在 [随机] 按钮左侧 (X = AnchorEnd(48))
+        _shareBtn = new Button
+        {
+            Text = "分享",
+            X = Pos.AnchorEnd(48),
+            Y = 1,
+            CanFocus = false,
+            ShadowStyle = ShadowStyles.None
+        };
+        _shareBtn.TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop;
+        _shareBtn.KeyBindings.Remove(Key.Space);
+        _shareBtn.Accepting += (s, e) =>
+        {
+            _focusedControlIndex = 2;
+            UpdateControlHighlight();
+            ShareClicked?.Invoke();
+        };
+        Add(_shareBtn);
 
         HasFocusChanged += (s, e) =>
         {
@@ -399,9 +420,9 @@ public sealed class PlayerControlBar : FrameView
             }
             else
             {
-                if (_focusedControlIndex < 0 || _focusedControlIndex > 10)
+                if (_focusedControlIndex < 0 || _focusedControlIndex > 11)
                 {
-                    _focusedControlIndex = 4;
+                    _focusedControlIndex = 5;
                 }
             }
             UpdateControlHighlight();
@@ -488,7 +509,7 @@ public sealed class PlayerControlBar : FrameView
     {
         do
         {
-            _focusedControlIndex = (_focusedControlIndex - 1 + 11) % 11;
+            _focusedControlIndex = (_focusedControlIndex - 1 + 12) % 12;
         } while (IsControlSkipped(_focusedControlIndex));
 
         UpdateControlHighlight();
@@ -498,7 +519,7 @@ public sealed class PlayerControlBar : FrameView
     {
         do
         {
-            _focusedControlIndex = (_focusedControlIndex + 1) % 11;
+            _focusedControlIndex = (_focusedControlIndex + 1) % 12;
         } while (IsControlSkipped(_focusedControlIndex));
 
         UpdateControlHighlight();
@@ -506,10 +527,10 @@ public sealed class PlayerControlBar : FrameView
 
     private void ToggleRowControl()
     {
-        // 0-5 为第1行控件，6-10 为第0行控件
-        if (_focusedControlIndex <= 5)
+        // 0-6 为第1行控件，7-11 为第0行控件
+        if (_focusedControlIndex <= 6)
         {
-            _focusedControlIndex = 6;
+            _focusedControlIndex = 7;
         }
         else
         {
@@ -528,7 +549,7 @@ public sealed class PlayerControlBar : FrameView
 
     private bool IsControlSkipped(int index)
     {
-        if (_isLocalMode && (index == 1 || index == 7)) // 收藏 或 下载
+        if (_isLocalMode && (index == 1 || index == 8)) // 收藏 或 下载
         {
             return true;
         }
@@ -546,31 +567,34 @@ public sealed class PlayerControlBar : FrameView
             case 1: // 收藏
                 if (!_isLocalMode) FavoriteClicked?.Invoke();
                 break;
-            case 2: // 循环模式
+            case 2: // 分享
+                ShareClicked?.Invoke();
+                break;
+            case 3: // 循环模式
                 ModeClicked?.Invoke();
                 break;
-            case 3: // 上一首
+            case 4: // 上一首
                 PrevClicked?.Invoke();
                 break;
-            case 4: // 播放/暂停
+            case 5: // 播放/暂停
                 PlayPauseClicked?.Invoke();
                 break;
-            case 5: // 下一首
+            case 6: // 下一首
                 NextClicked?.Invoke();
                 break;
-            case 6: // 音质
+            case 7: // 音质
                 QualityClicked?.Invoke();
                 break;
-            case 7: // 下载
+            case 8: // 下载
                 if (!_isLocalMode) DownloadClicked?.Invoke();
                 break;
-            case 8: // 音量 -
+            case 9: // 音量 -
                 VolumeAdjustRequested?.Invoke(-10);
                 break;
-            case 9: // 音量值 (静音)
+            case 10: // 音量值 (静音)
                 VolumeMuteToggled?.Invoke();
                 break;
-            case 10: // 音量 +
+            case 11: // 音量 +
                 VolumeAdjustRequested?.Invoke(10);
                 break;
         }
@@ -589,15 +613,16 @@ public sealed class PlayerControlBar : FrameView
         bool isFocused = HasFocus;
 
         _favBtn.SetScheme((isFocused && _focusedControlIndex == 1) ? focusScheme : (_isFavorite ? MikuTheme.FavoriteActive : normalScheme));
-        _modeBtn.SetScheme((isFocused && _focusedControlIndex == 2) ? focusScheme : normalScheme);
-        _prevBtn.SetScheme((isFocused && _focusedControlIndex == 3) ? focusScheme : normalScheme);
-        _playPauseBtn.SetScheme((isFocused && _focusedControlIndex == 4) ? focusScheme : normalScheme);
-        _nextBtn.SetScheme((isFocused && _focusedControlIndex == 5) ? focusScheme : normalScheme);
-        _qualityBtn.SetScheme((isFocused && _focusedControlIndex == 6) ? focusScheme : normalScheme);
-        _downloadBtn.SetScheme((isFocused && _focusedControlIndex == 7) ? focusScheme : normalScheme);
-        _volumeDecBtn.SetScheme((isFocused && _focusedControlIndex == 8) ? focusScheme : normalScheme);
-        _volumeBtn.SetScheme((isFocused && _focusedControlIndex == 9) ? focusScheme : normalScheme);
-        _volumeIncBtn.SetScheme((isFocused && _focusedControlIndex == 10) ? focusScheme : normalScheme);
+        _shareBtn.SetScheme((isFocused && _focusedControlIndex == 2) ? focusScheme : normalScheme);
+        _modeBtn.SetScheme((isFocused && _focusedControlIndex == 3) ? focusScheme : normalScheme);
+        _prevBtn.SetScheme((isFocused && _focusedControlIndex == 4) ? focusScheme : normalScheme);
+        _playPauseBtn.SetScheme((isFocused && _focusedControlIndex == 5) ? focusScheme : normalScheme);
+        _nextBtn.SetScheme((isFocused && _focusedControlIndex == 6) ? focusScheme : normalScheme);
+        _qualityBtn.SetScheme((isFocused && _focusedControlIndex == 7) ? focusScheme : normalScheme);
+        _downloadBtn.SetScheme((isFocused && _focusedControlIndex == 8) ? focusScheme : normalScheme);
+        _volumeDecBtn.SetScheme((isFocused && _focusedControlIndex == 9) ? focusScheme : normalScheme);
+        _volumeBtn.SetScheme((isFocused && _focusedControlIndex == 10) ? focusScheme : normalScheme);
+        _volumeIncBtn.SetScheme((isFocused && _focusedControlIndex == 11) ? focusScheme : normalScheme);
 
         RenderProgressLabel();
         SetNeedsDraw();

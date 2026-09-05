@@ -24,6 +24,7 @@ public sealed class UserSession
     public double LastPlaybackPositionSeconds { get; set; } = 0;
     public Song? LastPlayedSong { get; set; } = null;
     public Dictionary<string, string> Cookies { get; set; } = [];
+    public HashSet<string> FavoriteSingers { get; set; } = [];
 
     public static void Load()
     {
@@ -81,6 +82,15 @@ public sealed class UserSession
                 }
             }
 
+            if (root.TryGetProperty("favorite_singers", out var sArr) && sArr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var elem in sArr.EnumerateArray())
+                {
+                    var mid = elem.GetString();
+                    if (!string.IsNullOrEmpty(mid)) session.FavoriteSingers.Add(mid);
+                }
+            }
+
             Current = session;
         }
         catch
@@ -118,6 +128,12 @@ public sealed class UserSession
                     "}";
             }
 
+            var singerList = new List<string>();
+            foreach (var smid in FavoriteSingers)
+            {
+                singerList.Add($"\"{JsonEscape(smid)}\"");
+            }
+
             var json = $"{{" +
                 $"\"uin\":\"{JsonEscape(Uin)}\"," +
                 $"\"nick\":\"{JsonEscape(Nick)}\"," +
@@ -128,7 +144,8 @@ public sealed class UserSession
                 $"\"playback_mode\":\"{PlaybackMode}\"," +
                 $"\"last_position\":{LastPlaybackPositionSeconds:F2}," +
                 $"\"last_song\":{lastSongJson}," +
-                $"\"cookies\":{{{string.Join(",", cookiePairs)}}}" +
+                $"\"cookies\":{{{string.Join(",", cookiePairs)}}}," +
+                $"\"favorite_singers\":[{string.Join(",", singerList)}]" +
                 $"}}";
 
             File.WriteAllText(s_configPath, json);
