@@ -1,0 +1,22 @@
+bin/
+obj/
+*.dbg
+*.tmp
+*.media
+.cache/
+qqmusic官方openapi文档/
+.agents/
+*.md
+!README.md
+
+# 排除旧二进制包与外部依赖
+*.asar
+*.7z
+*.deb
+*.pkg.tar.*
+src/
+pkg/
+target/
+dist/
+node_modules/
+tui/
