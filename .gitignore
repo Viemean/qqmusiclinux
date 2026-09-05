@@ -4,23 +4,11 @@ obj/
 *.tmp
 *.media
 .cache/
-qqmusic官方openapi文档/
 .agents/
-*.md
-!README.md
+qqmusic官方openapi文档/
+OPENAPI_INDEX_AND_MAPPING.md
 
-# 排除旧二进制包与外部依赖
-*.asar
-*.7z
-*.deb
+# 构建输出与打包产物
 *.pkg.tar.*
-logo.png
-qqmusic.desktop
-qqmusic.sh
-src/
 pkg/
-target/
-dist/
-node_modules/
-tui/
 qqmusic-tui
