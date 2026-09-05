@@ -14,13 +14,19 @@ public static class AppLogger
     public static void Init(bool debugEnabled = false)
     {
         s_debugEnabled = debugEnabled;
-        if (!s_debugEnabled) return;
 
         try
         {
             lock (s_lock)
             {
-                File.AppendAllText(s_logFilePath, $"=== QQ Music TUI Session Started at {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} ===\n", Encoding.UTF8);
+                // 若日志文件超过 5MB，安全轮转备份一次，防止无限膨胀
+                if (File.Exists(s_logFilePath) && new FileInfo(s_logFilePath).Length > 5 * 1024 * 1024)
+                {
+                    var backupPath = s_logFilePath + ".old";
+                    File.Move(s_logFilePath, backupPath, overwrite: true);
+                }
+
+                File.AppendAllText(s_logFilePath, $"=== QQ Music TUI Session Started at {DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} (Debug: {s_debugEnabled}) ===\n", Encoding.UTF8);
             }
         }
         catch
@@ -35,7 +41,7 @@ public static class AppLogger
 
     public static void Warn(string module, string message)
     {
-        if (s_debugEnabled) Log("WARN", module, message);
+        Log("WARN", module, message);
     }
 
     public static void Debug(string module, string message)
@@ -47,6 +53,12 @@ public static class AppLogger
     {
         var fullMsg = ex != null ? $"{message} | Exception: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}" : message;
         Log("ERROR", module, fullMsg);
+    }
+
+    public static void Fatal(string module, string message, Exception? ex = null)
+    {
+        var fullMsg = ex != null ? $"{message} | Exception: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}" : message;
+        Log("FATAL", module, fullMsg);
     }
 
     private static void Log(string level, string module, string message)

@@ -130,19 +130,22 @@ public sealed partial class MainWindow
             _mprisService.UpdateVolume(_player.Volume);
             _mprisService.UpdatePlaybackMode(_currentPlaybackMode);
 
-            // 异步后台拉取/提取封面，就绪后立即向系统 MPRIS 发送 mpris:artUrl (file://)
-            _ = Task.Run(async () =>
+            if (TerminalImageHelper.IsImageSupported)
             {
-                try
+                // 异步后台拉取/提取封面，就绪后立即向系统 MPRIS 发送 mpris:artUrl (file://)
+                _ = Task.Run(async () =>
                 {
-                    var cover = await TerminalImageHelper.EnsureSongCoverAsync(song);
-                    if (!string.IsNullOrEmpty(cover))
+                    try
                     {
-                        _mprisService.UpdateCover(cover);
+                        var cover = await TerminalImageHelper.EnsureSongCoverAsync(song);
+                        if (!string.IsNullOrEmpty(cover))
+                        {
+                            _mprisService.UpdateCover(cover);
+                        }
                     }
-                }
-                catch {}
-            });
+                    catch {}
+                });
+            }
 
             Application.Invoke(() =>
             {

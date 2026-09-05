@@ -8,42 +8,56 @@ public sealed partial class MainWindow
 {
     private async Task ExecuteSearchAsync()
     {
-        _currentViewMode = ViewMode.Search;
-        _isViewingPlaylistsList = false;
-        _currentDrilldownPlaylist = null;
-        _isViewingAlbumsList = false;
-        _currentDrilldownAlbum = null;
+        if (_isSearching) return;
+        _isSearching = true;
 
-        var text = _searchField.Text.ToString()?.Trim();
-        if (string.IsNullOrEmpty(text)) return;
-
-        _lastSearchQuery = text;
-        _searchCurrentPage = 1;
-        _hasMoreSearchResults = true;
-        _isLoadingMore = false;
-
-        _songListView.SetMessage("正在搜索...", $"正在搜索「{text}」...");
-
-        var songs = await QqMusicApi.SearchAsync(text, 1, PageSize);
-
-        Application.Invoke(() =>
+        try
         {
-            if (songs.Count < PageSize)
-            {
-                _hasMoreSearchResults = false;
-            }
+            _currentViewMode = ViewMode.Search;
+            _isViewingPlaylistsList = false;
+            _currentDrilldownPlaylist = null;
+            _isViewingAlbumsList = false;
+            _currentDrilldownAlbum = null;
 
-            var title = $"搜索结果: 共 {songs.Count} 首" + (_hasMoreSearchResults ? " (向下滚动加载更多)" : " (已全部加载)");
-            _songListView.SetSongs(songs, title);
-            if (_activeSong != null)
+            var text = _searchField.Text.ToString()?.Trim();
+            if (string.IsNullOrEmpty(text)) return;
+
+            _lastSearchQuery = text;
+            _searchCurrentPage = 1;
+            _hasMoreSearchResults = true;
+            _isLoadingMore = false;
+
+            _songListView.SetMessage("正在搜索...", $"正在搜索「{text}」...");
+
+            var songs = await QqMusicApi.SearchAsync(text, 1, PageSize);
+
+            Application.Invoke(() =>
             {
-                _songListView.SetPlayingSong(_activeSong.Mid);
-            }
-            if (songs.Count > 0)
-            {
-                _songListView.SetFocusToList();
-            }
-        });
+                if (songs.Count < PageSize)
+                {
+                    _hasMoreSearchResults = false;
+                }
+
+                var title = $"搜索结果: 共 {songs.Count} 首" + (_hasMoreSearchResults ? " (向下滚动加载更多)" : " (已全部加载)");
+                _songListView.SetSongs(songs, title);
+                if (_activeSong != null)
+                {
+                    _songListView.SetPlayingSong(_activeSong.Mid);
+                }
+                if (songs.Count > 0)
+                {
+                    _songListView.SetFocusToList();
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            QQMusic.Tui.Utils.AppLogger.Error("Search", "ExecuteSearchAsync failed", ex);
+        }
+        finally
+        {
+            _isSearching = false;
+        }
     }
 
     private async Task LoadMoreSearchResultsAsync()

@@ -8,6 +8,7 @@ using Terminal.Gui.Views;
 using QQMusic.Tui.Api;
 using QQMusic.Tui.Models;
 using QQMusic.Tui.Player;
+using QQMusic.Tui.Services;
 using QQMusic.Tui.Utils;
 
 namespace QQMusic.Tui.UI;
@@ -35,6 +36,7 @@ public sealed partial class MainWindow : Window
     private readonly Label _lyricTitleLabel;
     private readonly Label _searchLabel;
     private readonly Button _userStatusBtn;
+    private readonly Button _recognizeBtn;
     private readonly NowPlayingView _nowPlayingView;
     private bool _isNowPlayingViewActive = false;
     private bool _isSearchActive = false;
@@ -51,6 +53,7 @@ public sealed partial class MainWindow : Window
     private readonly List<int> _lyricItemToLineIndex = [];
     private readonly Dictionary<int, int> _lyricLineToFirstItemIndex = [];
     private int _lastLyricViewportWidth = 0;
+    private object? _lyricResizeTimerToken;
     private int _currentActiveLyricIndex = -1;
     private Song? _activeSong;
     private AudioQualityTier _preferredQualityTier;
@@ -60,6 +63,7 @@ public sealed partial class MainWindow : Window
     private int _searchCurrentPage = 1;
     private bool _isLoadingMore = false;
     private bool _hasMoreSearchResults = false;
+    private bool _isSearching = false;
     private const int PageSize = 50;
 
     private Playlist? _currentDrilldownPlaylist = null;
@@ -137,10 +141,7 @@ public sealed partial class MainWindow : Window
             {
                 Application.Invoke(() =>
                 {
-                    if (_userStatusBtn != null)
-                    {
-                        _userStatusBtn.Text = GetUserStatusText();
-                    }
+                    UpdateTopRightButtonsLayout();
                 });
             }
         });
@@ -166,7 +167,6 @@ public sealed partial class MainWindow : Window
         _userStatusBtn = new Button
         {
             Text = GetUserStatusText(),
-            X = Pos.AnchorEnd(32),
             Y = 0,
             ShadowStyle = ShadowStyles.None,
             CanFocus = false
@@ -183,11 +183,31 @@ public sealed partial class MainWindow : Window
         _userStatusBtn.Accepting += (s, e) => ShowLoginDialog();
         Add(_userStatusBtn);
 
+        // 顶部听歌识曲按钮：独立位于账号按钮左侧 (留出 2 列安全间距)，杜绝物理重叠
+        _recognizeBtn = new Button
+        {
+            Text = "识曲",
+            Y = 0,
+            ShadowStyle = ShadowStyles.None,
+            CanFocus = false
+        };
+        _recognizeBtn.TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop;
+        _recognizeBtn.KeyBindings.Remove(Key.Space);
+        _recognizeBtn.MouseEvent += (s, m) =>
+        {
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked))
+            {
+                ShowAudioRecognitionDialog();
+            }
+        };
+        _recognizeBtn.Accepting += (s, e) => ShowAudioRecognitionDialog();
+        Add(_recognizeBtn);
+
         _searchField = new TextField
         {
             X = Pos.Right(_searchLabel) + 1,
             Y = 0,
-            Width = Dim.Fill(34),
+            Width = Dim.Fill(36),
             Text = "",
             CanFocus = false,
             TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop
@@ -201,6 +221,9 @@ public sealed partial class MainWindow : Window
                 _searchField.SetFocus();
             }
         };
+
+        // 初始化顶部按钮的独立防重叠自适应布局
+        UpdateTopRightButtonsLayout();
         _searchField.KeyDown += async (s, k) =>
         {
             if (k == Key.Enter)
@@ -447,7 +470,17 @@ public sealed partial class MainWindow : Window
             if (curW > 0 && curW != _lastLyricViewportWidth)
             {
                 _lastLyricViewportWidth = curW;
-                Application.Invoke(RefreshLyricListView);
+                if (_lyricResizeTimerToken != null)
+                {
+                    Application.RemoveTimeout(_lyricResizeTimerToken);
+                    _lyricResizeTimerToken = null;
+                }
+                _lyricResizeTimerToken = Application.AddTimeout(TimeSpan.FromMilliseconds(150), () =>
+                {
+                    _lyricResizeTimerToken = null;
+                    RefreshLyricListView();
+                    return false;
+                });
             }
         };
         _lyricListView.RowRender += (s, e) =>
@@ -597,6 +630,9 @@ public sealed partial class MainWindow : Window
         };
         _artistAlbumDetailView.Clicked += () => SetFocusToWindow(2);
         _artistAlbumDetailView.TabNavigationRequested += forward => SwitchNextFocusWindow(forward);
+        _artistAlbumDetailView.SubModeRequested += () => _ = ToggleSingerSubModeAsync();
+        _artistAlbumDetailView.OrderRequested += () => _ = ToggleSingerSongOrderAsync();
+        _artistAlbumDetailView.FavoriteRequested += () => _ = ToggleSingerFavoriteAsync();
         _lyricFrame.Add(_artistAlbumDetailView);
 
         Add(_lyricFrame);
@@ -639,6 +675,7 @@ public sealed partial class MainWindow : Window
         _controlBar.QualityClicked += ShowQualityDialog;
         _controlBar.DownloadClicked += ShowDownloadDialog;
         _controlBar.ModeClicked += TogglePlaybackMode;
+        _controlBar.ShareClicked += HandleShareCurrentSong;
         _controlBar.UpdatePlaybackMode(_currentPlaybackMode);
         _controlBar.VolumeAdjustRequested += AdjustVolume;
         _controlBar.VolumeMuteToggled += ToggleMute;
@@ -691,7 +728,7 @@ public sealed partial class MainWindow : Window
         // 底部快捷键操作指南（独立放置在控制栏UI方框下方最底行，干净平整无边框干扰）
         _hotkeyHintLabel = new Label
         {
-            Text = " [V]播放界面  [P]沉浸  [O]播放顺序  [S]收藏  [T]翻译  [/]搜索  [J]上一首  [L]下一首  [M]静音",
+            Text = " [V]播放界面  [P]沉浸  [O]播放顺序  [S]收藏  [T]翻译  [/]搜索  [J]上一首  [L]下一首  [M]静音  [R]识曲",
             X = 0,
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
@@ -784,6 +821,20 @@ public sealed partial class MainWindow : Window
         };
         _nowPlayingView.ToggleTranslationRequested += ToggleTranslation;
         _nowPlayingView.ToggleImmersiveRequested += ToggleImmersiveMode;
+        _nowPlayingView.ArtistDrilldownRequested += HandleNowPlayingArtistClicked;
+        _nowPlayingView.AlbumDrilldownRequested += (song) =>
+        {
+            CloseNowPlayingView();
+            OnAlbumClicked(song);
+        };
+        _nowPlayingView.FocusControlBarRequested += () =>
+        {
+            SetFocusToWindow(3);
+        };
+        _nowPlayingView.FocusChangedNotification += () =>
+        {
+            Application.Invoke(UpdateFrameBorderHighlights);
+        };
         Add(_nowPlayingView);
         _controlBar.NowPlayingClicked += ToggleNowPlayingView;
 
@@ -824,45 +875,23 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            // 3. 搜索框处于激活打字状态：放行所有字符输入（包括 '/'、空格等），仅处理退出搜索或提交
+            // 3. 搜索框处于激活打字状态：全部交由 _searchField.KeyDown 独立处理，避免双重并发触发
             if (_searchField.HasFocus && _isSearchActive)
             {
-                if (k == Key.Esc || k == Key.CursorDown || k == Key.CursorUp)
-                {
-                    k.Handled = true;
-                    _isSearchActive = false;
-                    _searchField.CanFocus = false;
-                    _songListView.SetFocusToList();
-                    Application.Invoke(UpdateFrameBorderHighlights);
-                    return;
-                }
-                if (k == Key.Enter)
-                {
-                    k.Handled = true;
-                    _isSearchActive = false;
-                    _searchField.CanFocus = false;
-                    await ExecuteSearchAsync();
-                    _songListView.SetFocusToList();
-                    Application.Invoke(UpdateFrameBorderHighlights);
-                    return;
-                }
-                if (k == Key.Tab || k.AsRune.Value == '\t' || k.ToString().Contains("Tab"))
-                {
-                    k.Handled = true;
-                    _isSearchActive = false;
-                    _searchField.CanFocus = false;
-                    SwitchNextFocusWindow(!k.IsShift);
-                    return;
-                }
                 return;
             }
 
-            // 4. 全局 Tab 与 Shift+Tab 四大视窗流转
+            // 4. 全局 Tab 与 Shift+Tab 流转
             if (k == Key.Tab || k.AsRune.Value == '\t' || k.ToString().Contains("Tab"))
             {
                 k.Handled = true;
                 _isSearchActive = false;
                 _searchField.CanFocus = false;
+                if (_isNowPlayingViewActive)
+                {
+                    _nowPlayingView.HandleTabNavigation(!k.IsShift);
+                    return;
+                }
                 SwitchNextFocusWindow(!k.IsShift);
                 return;
             }
@@ -915,6 +944,28 @@ public sealed partial class MainWindow : Window
                     await LoadFavoriteAlbumsAsync();
                 }
                 return;
+            }
+
+            if (_currentViewMode == ViewMode.ArtistDetail && !_isSearchActive)
+            {
+                if (k == Key.D1 || c == '1')
+                {
+                    k.Handled = true;
+                    await ToggleSingerSubModeAsync();
+                    return;
+                }
+                if (k == Key.D2 || c == '2')
+                {
+                    k.Handled = true;
+                    await ToggleSingerSongOrderAsync();
+                    return;
+                }
+                if (k == Key.D3 || c == '3')
+                {
+                    k.Handled = true;
+                    await ToggleSingerFavoriteAsync();
+                    return;
+                }
             }
 
             if (c == 'Q')
@@ -978,6 +1029,13 @@ public sealed partial class MainWindow : Window
             {
                 k.Handled = true;
                 ToggleTranslation();
+                return;
+            }
+
+            if (c == 'R')
+            {
+                k.Handled = true;
+                ShowAudioRecognitionDialog();
                 return;
             }
 
@@ -1152,8 +1210,60 @@ public sealed partial class MainWindow : Window
         return "未登录 (按 L 登录)";
     }
 
+    /// <summary>
+    /// 精准计算文本的终端视觉宽度（考虑 CJK 宽字符占 2 列）
+    /// </summary>
+    private static int GetVisualWidth(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        int width = 0;
+        foreach (var ch in text)
+        {
+            width += ch > 127 ? 2 : 1;
+        }
+        return width;
+    }
+
+    /// <summary>
+    /// 动态刷新顶部右上角按钮（账号状态按钮与识曲按钮）的防重叠独立布局
+    /// 保证 [ 识曲 ] 独立位于 [ 账号 ] 左侧并间隔 2 列安全距离，杜绝文字变长物理重叠
+    /// </summary>
+    internal void UpdateTopRightButtonsLayout()
+    {
+        if (_userStatusBtn == null || _recognizeBtn == null || _searchField == null) return;
+
+        var statusText = GetUserStatusText();
+        _userStatusBtn.Text = statusText;
+
+        // Terminal.Gui 按钮包含外围 "[ " 和 " ]"，故额外占用 4 列
+        int userBtnWidth = GetVisualWidth(statusText) + 4;
+        // 账号按钮紧靠右上角 (右侧保留 1 列安全留白)
+        int userAnchorOffset = userBtnWidth + 1;
+        _userStatusBtn.X = Pos.AnchorEnd(userAnchorOffset);
+
+        // 识曲按钮 [ 识曲 ]
+        const string recText = "识曲";
+        _recognizeBtn.Text = recText;
+        int recBtnWidth = GetVisualWidth(recText) + 4;
+
+        // 识曲按钮排在账号按钮左边，间隔 2 列独立分开
+        int recAnchorOffset = userAnchorOffset + 2 + recBtnWidth;
+        _recognizeBtn.X = Pos.AnchorEnd(recAnchorOffset);
+
+        // 搜索框自动填满左侧剩余空间 (避开识曲与账号按钮并留出 2 列间距)
+        _searchField.Width = Dim.Fill(recAnchorOffset + 2);
+
+        SetNeedsLayout();
+    }
+
     private void SwitchNextFocusWindow(bool forward)
     {
+        if (_isNowPlayingViewActive)
+        {
+            _nowPlayingView.HandleTabNavigation(forward);
+            return;
+        }
+
         var focused = Application.Navigation?.GetFocused();
         int currentWindow = GetFocusedWindowIndex(focused);
         if (currentWindow == -1)
@@ -1188,6 +1298,7 @@ public sealed partial class MainWindow : Window
         _searchLabel.Visible = !enable;
         _searchField.Visible = !enable;
         _userStatusBtn.Visible = !enable;
+        _recognizeBtn.Visible = !enable;
 
         // 2. 下方控制栏与快捷键提示栏显隐
         _controlBar.Visible = !enable;
@@ -1314,6 +1425,7 @@ public sealed partial class MainWindow : Window
             if (v == _songListView) return 1;
             if (v == _lyricFrame || v == _lyricListView || v == _artistAlbumDetailView) return 2;
             if (v == _controlBar) return 3;
+            if (v == _nowPlayingView) return 4;
         }
         return -1;
     }
@@ -1342,6 +1454,9 @@ public sealed partial class MainWindow : Window
                 break;
             case 3:
                 _controlBar.SetFocusToBar();
+                break;
+            case 4:
+                _nowPlayingView.HandleTabNavigation(true);
                 break;
             default:
                 _songListView.SetFocusToList();
@@ -1645,6 +1760,7 @@ public sealed partial class MainWindow : Window
         _searchLabel.Visible = false;
         _searchField.Visible = false;
         _userStatusBtn.Visible = false;
+        _recognizeBtn.Visible = false;
 
         _nowPlayingView.SetSong(_activeSong, AudioQualityHelper.GetBadge(_actualQualityTier));
         _nowPlayingView.SetLyrics(_currentLyrics, _showTranslation);
@@ -1665,6 +1781,7 @@ public sealed partial class MainWindow : Window
         _searchLabel.Visible = !_isImmersiveMode;
         _searchField.Visible = !_isImmersiveMode;
         _userStatusBtn.Visible = !_isImmersiveMode;
+        _recognizeBtn.Visible = !_isImmersiveMode;
 
         _isSearchActive = false;
         _songListView.SetFocusToList();

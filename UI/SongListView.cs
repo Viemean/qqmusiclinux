@@ -53,6 +53,8 @@ public sealed partial class SongListView : FrameView
     private readonly ThinScrollBarView _scrollBar = new();
 
     private int _lastWidth = -1;
+    private object? _viewportResizeTimerToken;
+    private object? _loadMoreDebounceToken;
     private string _currentFullTitle = "歌曲列表 (就绪)";
     private int _marqueeOffset = 0;
     private object? _timeoutToken;
@@ -402,25 +404,45 @@ public sealed partial class SongListView : FrameView
         {
             if (!_isRadioMode)
             {
-                CheckTriggerLoadMore();
+                if (_loadMoreDebounceToken != null)
+                {
+                    Application.RemoveTimeout(_loadMoreDebounceToken);
+                    _loadMoreDebounceToken = null;
+                }
+                _loadMoreDebounceToken = Application.AddTimeout(TimeSpan.FromMilliseconds(200), () =>
+                {
+                    _loadMoreDebounceToken = null;
+                    CheckTriggerLoadMore();
+                    return false;
+                });
             }
         };
 
-        // 监听视图视口变化，自适应动态重算列宽或电台卡片排版
+        // 监听视图视口变化，自适应动态重算列宽或电台卡片排版 (150ms 防抖，防手机软键盘收起展开高频闪烁)
         ViewportChanged += (s, e) =>
         {
             int curW = _listView.Viewport.Width > 0 ? _listView.Viewport.Width : Viewport.Width;
             if (curW > 0 && curW != _lastWidth)
             {
                 _lastWidth = curW;
-                if (_isRadioMode && _currentRadioSong != null)
+                if (_viewportResizeTimerToken != null)
                 {
-                    RefreshRadioDisplay();
+                    Application.RemoveTimeout(_viewportResizeTimerToken);
+                    _viewportResizeTimerToken = null;
                 }
-                else if (_songs.Count > 0)
+                _viewportResizeTimerToken = Application.AddTimeout(TimeSpan.FromMilliseconds(150), () =>
                 {
-                    RefreshDisplayList();
-                }
+                    _viewportResizeTimerToken = null;
+                    if (_isRadioMode && _currentRadioSong != null)
+                    {
+                        RefreshRadioDisplay();
+                    }
+                    else if (_songs.Count > 0)
+                    {
+                        RefreshDisplayList();
+                    }
+                    return false;
+                });
             }
         };
 
