@@ -14,6 +14,9 @@ qqmusic官方openapi文档/
 *.7z
 *.deb
 *.pkg.tar.*
+logo.png
+qqmusic.desktop
+qqmusic.sh
 src/
 pkg/
 target/

@@ -1,0 +1,111 @@
+name: Build and Release TUI (Multi-Arch)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }} package
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            os: ubuntu-latest
+            rid: linux-x64
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+            rid: linux-arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Install Native Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgstreamer1.0-dev clang zstd
+
+      - name: Build Native AOT (${{ matrix.arch }})
+        run: |
+          dotnet publish -c Release -r ${{ matrix.rid }} QQMusic.Tui.csproj
+
+      - name: Package Arch Linux ZST (${{ matrix.arch }})
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="0.1.0"
+          fi
+          PKGREL="1"
+          ARCH="${{ matrix.arch }}"
+          PKGNAME="qqmusic-tui-bin"
+          OUTPUT_FILE="${PKGNAME}-${VERSION}-${PKGREL}-${ARCH}.pkg.tar.zst"
+
+          BIN_PATH="bin/Release/net10.0/${{ matrix.rid }}/publish/QQMusic.Tui"
+          STAGE_DIR=$(mktemp -d)
+
+          mkdir -p "$STAGE_DIR/usr/bin"
+          cp "$BIN_PATH" "$STAGE_DIR/usr/bin/qqmusic-tui"
+          chmod 755 "$STAGE_DIR/usr/bin/qqmusic-tui"
+
+          INSTALLED_SIZE=$(du -sb "$STAGE_DIR/usr" | awk '{print $1}')
+          BUILD_DATE=$(date +%s)
+
+          cat << EOF > "$STAGE_DIR/.PKGINFO"
+pkgname = ${PKGNAME}
+pkgbase = ${PKGNAME}
+pkgver = ${VERSION}-${PKGREL}
+pkgdesc = Linux terminal QQ Music player (.NET 10 Native AOT pre-built package)
+url = https://github.com/Viemean/qqmusiclinux/tree/tui
+builddate = ${BUILD_DATE}
+packager = GitHub Actions <actions@github.com>
+size = ${INSTALLED_SIZE}
+arch = ${ARCH}
+license = MIT
+depend = gstreamer
+depend = gst-plugins-base
+depend = gst-plugins-good
+optdepend = ffmpeg: cover art extraction and display
+optdepend = imagemagick: rounded corner cover rendering
+provides = qqmusic-tui
+conflict = qqmusic-tui
+EOF
+
+          tar -C "$STAGE_DIR" -c --zstd -f "$OUTPUT_FILE" .PKGINFO usr
+          echo "Built: $OUTPUT_FILE"
+
+      - name: Upload Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqmusic-tui-pkg-${{ matrix.arch }}
+          path: qqmusic-tui-bin-*.pkg.tar.zst
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.pkg.tar.zst
+          generate_release_notes: true
