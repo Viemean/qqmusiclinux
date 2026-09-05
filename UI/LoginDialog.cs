@@ -248,7 +248,7 @@ public sealed class LoginDialog : Dialog
                 _qrView.SetSource(new ObservableCollection<string>(qr.AsciiLines));
                 if (_httpServer != null && _httpServer.IsRunning)
                 {
-                    _qrTipLabel.Text = $"网页扫码: {_httpServer.Url} (按 B 打开)";
+                    _qrTipLabel.Text = $"网页扫码: {_httpServer.Url}";
                     _openBrowserBtn.Visible = true;
                 }
                 else
