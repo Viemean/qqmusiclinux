@@ -1424,7 +1424,7 @@ public sealed partial class MainWindow : Window
             _standaloneWebServer.ToggleModeRequested += () => Application.Invoke(TogglePlaybackMode);
             _standaloneWebServer.ToggleQualityRequested += () => Application.Invoke(async () =>
             {
-                await CycleQualityTierAsync();
+                await CycleQualityTierAsync(allowHiRes: false);
             });
             _standaloneWebServer.SeekRequested += sec =>
             {

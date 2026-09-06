@@ -622,14 +622,14 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task CycleQualityTierAsync()
+    private async Task CycleQualityTierAsync(bool allowHiRes = false)
     {
-        // 循环切换音质：Standard (0) -> HQ (1) -> SQ (2) -> HiRes (3) -> Standard (0)
+        // 循环切换音质：Web 端跳过 Hi-Res（Standard -> HQ -> SQ -> Standard）
         var nextTier = _preferredQualityTier switch
         {
             AudioQualityTier.Standard => AudioQualityTier.HQ,
             AudioQualityTier.HQ => AudioQualityTier.SQ,
-            AudioQualityTier.SQ => AudioQualityTier.HiRes,
+            AudioQualityTier.SQ => allowHiRes ? AudioQualityTier.HiRes : AudioQualityTier.Standard,
             _ => AudioQualityTier.Standard
         };
         await SwitchQualityTierAsync(nextTier);
