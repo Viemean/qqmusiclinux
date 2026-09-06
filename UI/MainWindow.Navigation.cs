@@ -433,15 +433,25 @@ public sealed partial class MainWindow
             }
         }
 
-        // 随机播放模式
+        // 随机播放模式 (Fisher-Yates 洗牌记忆队列，整轮播完前绝不重复)
         if (_currentPlaybackMode == PlaybackMode.Shuffle && songs.Count > 1)
         {
-            int nextIdx;
-            do
-            {
-                nextIdx = Random.Shared.Next(songs.Count);
-            } while (nextIdx == currentIdx && songs.Count > 1);
+            EnsureShuffleQueue(songs.Count, currentIdx);
 
+            _shufflePointer++;
+            if (_shufflePointer >= _shuffleIndices.Count)
+            {
+                int lastSongIdx = _shuffleIndices[^1];
+                RebuildShuffleQueue(songs.Count, -1);
+                if (_shuffleIndices.Count > 1 && _shuffleIndices[0] == lastSongIdx)
+                {
+                    int swapTarget = 1 + Random.Shared.Next(_shuffleIndices.Count - 1);
+                    (_shuffleIndices[0], _shuffleIndices[swapTarget]) = (_shuffleIndices[swapTarget], _shuffleIndices[0]);
+                }
+                _shufflePointer = 0;
+            }
+
+            int nextIdx = _shuffleIndices[_shufflePointer];
             await PlaySongAsync(songs[nextIdx]);
             return;
         }
@@ -488,15 +498,21 @@ public sealed partial class MainWindow
             }
         }
 
-        // 随机播放模式
+        // 随机播放模式 (回溯上一首已播随机曲目)
         if (_currentPlaybackMode == PlaybackMode.Shuffle && songs.Count > 1)
         {
-            int prevIdx;
-            do
-            {
-                prevIdx = Random.Shared.Next(songs.Count);
-            } while (prevIdx == currentIdx && songs.Count > 1);
+            EnsureShuffleQueue(songs.Count, currentIdx);
 
+            if (_shufflePointer > 0)
+            {
+                _shufflePointer--;
+            }
+            else
+            {
+                _shufflePointer = _shuffleIndices.Count - 1;
+            }
+
+            int prevIdx = _shuffleIndices[_shufflePointer];
             await PlaySongAsync(songs[prevIdx]);
             return;
         }
@@ -514,5 +530,63 @@ public sealed partial class MainWindow
         {
             await PlaySongAsync(songs[currentIdx - 1]);
         }
+    }
+
+    private void EnsureShuffleQueue(int count, int currentIdx)
+    {
+        if (count <= 1)
+        {
+            _shuffleIndices.Clear();
+            _shufflePointer = -1;
+            _shuffleSongCount = count;
+            return;
+        }
+
+        if (_shuffleIndices.Count == count && _shuffleSongCount == count && _shufflePointer >= 0 && _shufflePointer < _shuffleIndices.Count)
+        {
+            if (currentIdx >= 0 && _shuffleIndices[_shufflePointer] != currentIdx)
+            {
+                int p = _shuffleIndices.IndexOf(currentIdx);
+                if (p >= 0)
+                {
+                    _shufflePointer = p;
+                }
+            }
+            return;
+        }
+
+        RebuildShuffleQueue(count, currentIdx);
+    }
+
+    private void RebuildShuffleQueue(int count, int currentIdx)
+    {
+        _shuffleIndices.Clear();
+        for (int i = 0; i < count; i++)
+        {
+            _shuffleIndices.Add(i);
+        }
+
+        // Fisher-Yates 洗牌算法
+        for (int i = count - 1; i > 0; i--)
+        {
+            int j = Random.Shared.Next(i + 1);
+            (_shuffleIndices[i], _shuffleIndices[j]) = (_shuffleIndices[j], _shuffleIndices[i]);
+        }
+
+        if (currentIdx >= 0)
+        {
+            int p = _shuffleIndices.IndexOf(currentIdx);
+            if (p >= 0)
+            {
+                (_shuffleIndices[0], _shuffleIndices[p]) = (_shuffleIndices[p], _shuffleIndices[0]);
+            }
+            _shufflePointer = 0;
+        }
+        else
+        {
+            _shufflePointer = -1;
+        }
+
+        _shuffleSongCount = count;
     }
 }

@@ -109,6 +109,11 @@ public sealed partial class MainWindow : Window
     private int _radioPlayedCount = 0;
     private bool _isRadioPrefetching = false;
 
+    // 列表随机播放（Shuffle 模式）Fisher-Yates 记忆队列
+    private readonly List<int> _shuffleIndices = [];
+    private int _shufflePointer = -1;
+    private int _shuffleSongCount = 0;
+
     private readonly HashSet<string> _favoriteSongMids = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<long> _favoriteSongIds = [];
 
@@ -2136,6 +2141,12 @@ public sealed partial class MainWindow : Window
     private void SetPlaybackMode(PlaybackMode mode)
     {
         _currentPlaybackMode = mode;
+        if (mode == PlaybackMode.Shuffle)
+        {
+            _shufflePointer = -1;
+            _shuffleSongCount = 0;
+            _shuffleIndices.Clear();
+        }
         UserSession.Current.PlaybackMode = mode;
         UserSession.Current.Save();
         _controlBar.UpdatePlaybackMode(mode);
