@@ -63,8 +63,14 @@ class ElectronMusicPlayer {
     this.isSeeking = false;
     this.currentStreamUrl = '';
     this.lastProgressReportTick = 0;
-    this.lastPositionStateTick = 0;
     this.hasSetInitialPositionState = false;
+
+    // SSE 通信看门狗与自动重连状态
+    this.sse = null;
+    this.sseReconnectTimer = null;
+    this.lastSseMessageTime = Date.now();
+    this.sseWatchdogInterval = null;
+
     this.init();
   }
 
@@ -215,6 +221,20 @@ class ElectronMusicPlayer {
 
     // 注册 Android / 系统通知栏标准按钮与状态公布
     this.setupMediaSession();
+
+    // 移动端息屏唤醒与切回前台事件：若长连接断开或超时，立即静默重连
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        const elapsed = Date.now() - this.lastSseMessageTime;
+        if (!this.sse || this.sse.readyState === EventSource.CLOSED || elapsed > 25000) {
+          this.reconnectSSE();
+        }
+      }
+    });
+
+    window.addEventListener('online', () => {
+      this.reconnectSSE();
+    });
   }
 
   updateLikeUI() {
@@ -381,9 +401,22 @@ class ElectronMusicPlayer {
   }
 
   connectSSE() {
+    if (this.sse) {
+      try { this.sse.close(); } catch {}
+      this.sse = null;
+    }
+
+    if (this.sseReconnectTimer) {
+      clearTimeout(this.sseReconnectTimer);
+      this.sseReconnectTimer = null;
+    }
+
     const sse = new EventSource('/api/events');
+    this.sse = sse;
+    this.lastSseMessageTime = Date.now();
 
     const processMessageData = (rawJson) => {
+      this.lastSseMessageTime = Date.now();
       try {
         const data = JSON.parse(rawJson);
         this.handleStateUpdate(data);
@@ -392,7 +425,18 @@ class ElectronMusicPlayer {
       }
     };
 
+    sse.onopen = () => {
+      this.lastSseMessageTime = Date.now();
+    };
+
     sse.onmessage = (e) => processMessageData(e.data);
+
+    sse.onerror = () => {
+      if (sse.readyState === EventSource.CLOSED) {
+        this.scheduleSseReconnect();
+      }
+    };
+
     const sseEventTypes = [
       'sync',
       'init',
@@ -408,10 +452,34 @@ class ElectronMusicPlayer {
       'song_change',
       'position',
       'mode_change',
+      'quality_change',
+      'favorite_change',
+      'audio_toggled',
     ];
     for (const type of sseEventTypes) {
       sse.addEventListener(type, (e) => processMessageData(e.data));
     }
+
+    // 启动看门狗：每 5 秒检测一次，若超过 25 秒无任何事件消息，判定连接挂起并自动重建连接
+    if (!this.sseWatchdogInterval) {
+      this.sseWatchdogInterval = setInterval(() => {
+        if (Date.now() - this.lastSseMessageTime > 25000) {
+          this.reconnectSSE();
+        }
+      }, 5000);
+    }
+  }
+
+  scheduleSseReconnect() {
+    if (this.sseReconnectTimer) return;
+    this.sseReconnectTimer = setTimeout(() => {
+      this.sseReconnectTimer = null;
+      this.connectSSE();
+    }, 2000);
+  }
+
+  reconnectSSE() {
+    this.connectSSE();
   }
 
   handleStateUpdate(data) {

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using QQMusic.Tui.Models;
 using QQMusic.Tui.UI;
 using QQMusic.Tui.Utils;
@@ -13,12 +14,41 @@ namespace QQMusic.Tui.Services;
 /// </summary>
 public sealed class WebPlaybackServer : IDisposable
 {
+    private sealed class SseClient : IDisposable
+    {
+        public TcpClient Client { get; }
+        public NetworkStream Stream { get; }
+        public Channel<string> Channel { get; }
+        public CancellationTokenSource Cts { get; }
+
+        public SseClient(TcpClient client, NetworkStream stream, CancellationToken parentToken)
+        {
+            Client = client;
+            Stream = stream;
+            Channel = System.Threading.Channels.Channel.CreateBounded<string>(new BoundedChannelOptions(32)
+            {
+                FullMode = BoundedChannelFullMode.DropOldest,
+                SingleReader = true,
+                SingleWriter = false
+            });
+            Cts = CancellationTokenSource.CreateLinkedTokenSource(parentToken);
+        }
+
+        public void Dispose()
+        {
+            try { Cts.Cancel(); } catch { }
+            try { Cts.Dispose(); } catch { }
+            try { Stream.Dispose(); } catch { }
+            try { Client.Dispose(); } catch { }
+        }
+    }
+
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private readonly object _lock = new();
     private bool _isDisposed;
 
-    private readonly List<NetworkStream> _sseStreams = new();
+    private readonly List<SseClient> _sseClients = new();
     private readonly object _sseLock = new();
 
     public int Port { get; private set; }
@@ -81,7 +111,8 @@ public sealed class WebPlaybackServer : IDisposable
             try
             {
                 _listener = new TcpListener(IPAddress.Any, preferredPort);
-                _listener.Start();
+                try { _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true); } catch {}
+                _listener.Start(128);
                 Port = preferredPort;
                 AppLogger.Info("WebPlaybackServer", $"Started Web playback server on preferred port {Port}");
             }
@@ -91,7 +122,8 @@ public sealed class WebPlaybackServer : IDisposable
                 try
                 {
                     _listener = new TcpListener(IPAddress.Any, 0);
-                    _listener.Start();
+                    try { _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true); } catch {}
+                    _listener.Start(128);
                     Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
                     AppLogger.Info("WebPlaybackServer", $"Started Web playback server on dynamic port {Port}");
                 }
@@ -130,6 +162,14 @@ public sealed class WebPlaybackServer : IDisposable
                 if (!ct.IsCancellationRequested)
                 {
                     AppLogger.Error("WebPlaybackServer", "AcceptTcpClient exception", ex);
+                    try
+                    {
+                        await Task.Delay(100, ct).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
                 }
             }
         }
@@ -137,88 +177,107 @@ public sealed class WebPlaybackServer : IDisposable
 
     private async Task HandleClientAsync(TcpClient client, CancellationToken ct)
     {
-        using (client)
-        using (var stream = client.GetStream())
+        try
         {
-            stream.ReadTimeout = 15000;
-            stream.WriteTimeout = 15000;
+            client.NoDelay = true;
+            client.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            client.LingerState = new LingerOption(enable: false, seconds: 0);
+        }
+        catch {}
 
+        bool keepAliveForSse = false;
+        var stream = client.GetStream();
+
+        try
+        {
+            byte[] buffer = new byte[4096];
+            using var readTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            readTimeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+
+            int bytesRead;
             try
             {
-                byte[] buffer = new byte[4096];
-                int bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct).ConfigureAwait(false);
-                if (bytesRead <= 0) return;
+                bytesRead = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), readTimeoutCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return;
+            }
 
-                string requestText = Encoding.UTF8.GetString(buffer, 0, bytesRead);
-                var headerEnd = requestText.IndexOf("\r\n\r\n", StringComparison.Ordinal);
-                string headerPart = headerEnd >= 0 ? requestText[..headerEnd] : requestText;
-                string bodyPart = headerEnd >= 0 && headerEnd + 4 < requestText.Length ? requestText[(headerEnd + 4)..] : "";
+            if (bytesRead <= 0) return;
 
-                string[] lines = headerPart.Split("\r\n");
-                if (lines.Length == 0) return;
+            string requestText = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+            var headerEnd = requestText.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+            string headerPart = headerEnd >= 0 ? requestText[..headerEnd] : requestText;
+            string bodyPart = headerEnd >= 0 && headerEnd + 4 < requestText.Length ? requestText[(headerEnd + 4)..] : "";
 
-                string firstLine = lines[0];
-                string[] parts = firstLine.Split(' ');
-                if (parts.Length < 2) return;
+            string[] lines = headerPart.Split("\r\n");
+            if (lines.Length == 0) return;
 
-                string method = parts[0].ToUpperInvariant();
-                string rawPath = parts[1];
-                string path = rawPath.Split('?')[0];
+            string firstLine = lines[0];
+            string[] parts = firstLine.Split(' ');
+            if (parts.Length < 2) return;
 
-                // 提取 Range 请求头
-                string? rangeHeader = null;
-                foreach (var line in lines)
+            string method = parts[0].ToUpperInvariant();
+            string rawPath = parts[1];
+            string path = rawPath.Split('?')[0];
+
+            // 提取 Range 请求头
+            string? rangeHeader = null;
+            foreach (var line in lines)
+            {
+                if (line.StartsWith("Range:", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (line.StartsWith("Range:", StringComparison.OrdinalIgnoreCase))
-                    {
-                        rangeHeader = line["Range:".Length..].Trim();
-                        break;
-                    }
+                    rangeHeader = line["Range:".Length..].Trim();
+                    break;
                 }
+            }
 
-                if (method == "GET")
+            if (method == "GET")
+            {
+                if (path == "/" || path == "/index.html")
                 {
-                    if (path == "/" || path == "/index.html")
-                    {
-                        var filePath = GetStaticFilePath("index.html");
-                        string html = !string.IsNullOrEmpty(filePath) && File.Exists(filePath)
-                            ? await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false)
-                            : GetFallbackHtml();
-                        await SendResponseAsync(stream, 200, "OK", "text/html; charset=utf-8", html, ct).ConfigureAwait(false);
-                    }
-                    else if (path == "/style.css")
-                    {
-                        var filePath = GetStaticFilePath("style.css");
-                        string css = !string.IsNullOrEmpty(filePath) && File.Exists(filePath)
-                            ? await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false)
-                            : GetFallbackCss();
-                        await SendResponseAsync(stream, 200, "OK", "text/css; charset=utf-8", css, ct).ConfigureAwait(false);
-                    }
-                    else if (path == "/app.js")
-                    {
-                        var filePath = GetStaticFilePath("app.js");
-                        string js = !string.IsNullOrEmpty(filePath) && File.Exists(filePath)
-                            ? await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false)
-                            : GetFallbackJs();
-                        await SendResponseAsync(stream, 200, "OK", "application/javascript; charset=utf-8", js, ct).ConfigureAwait(false);
-                    }
-                    else if (path == "/cover")
-                    {
-                        await HandleCoverRequestAsync(stream, ct).ConfigureAwait(false);
-                    }
-                    else if (path == "/stream/audio")
-                    {
-                        await HandleAudioStreamAsync(stream, rangeHeader, ct).ConfigureAwait(false);
-                    }
-                    else if (path == "/api/events")
-                    {
-                        await HandleSseEventsAsync(stream, ct).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        await SendResponseAsync(stream, 404, "Not Found", "text/plain", "Not Found", ct).ConfigureAwait(false);
-                    }
+                    var filePath = GetStaticFilePath("index.html");
+                    string html = !string.IsNullOrEmpty(filePath) && File.Exists(filePath)
+                        ? await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false)
+                        : GetFallbackHtml();
+                    await SendResponseAsync(stream, 200, "OK", "text/html; charset=utf-8", html, ct).ConfigureAwait(false);
                 }
+                else if (path == "/style.css")
+                {
+                    var filePath = GetStaticFilePath("style.css");
+                    string css = !string.IsNullOrEmpty(filePath) && File.Exists(filePath)
+                        ? await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false)
+                        : GetFallbackCss();
+                    await SendResponseAsync(stream, 200, "OK", "text/css; charset=utf-8", css, ct).ConfigureAwait(false);
+                }
+                else if (path == "/app.js")
+                {
+                    var filePath = GetStaticFilePath("app.js");
+                    string js = !string.IsNullOrEmpty(filePath) && File.Exists(filePath)
+                        ? await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false)
+                        : GetFallbackJs();
+                    await SendResponseAsync(stream, 200, "OK", "application/javascript; charset=utf-8", js, ct).ConfigureAwait(false);
+                }
+                else if (path == "/cover")
+                {
+                    await HandleCoverRequestAsync(stream, ct).ConfigureAwait(false);
+                }
+                else if (path == "/stream/audio")
+                {
+                    await HandleAudioStreamAsync(stream, rangeHeader, ct).ConfigureAwait(false);
+                }
+                else if (path == "/api/events")
+                {
+                    keepAliveForSse = true;
+                    await HandleSseEventsAsync(client, stream, ct).ConfigureAwait(false);
+                    return;
+                }
+                else
+                {
+                    await SendResponseAsync(stream, 404, "Not Found", "text/plain", "Not Found", ct).ConfigureAwait(false);
+                }
+            }
                 else if (method == "POST")
                 {
                     if (path == "/api/action")
@@ -300,8 +359,15 @@ public sealed class WebPlaybackServer : IDisposable
             {
                 AppLogger.Debug("WebPlaybackServer", $"Client socket handling finished: {ex.Message}");
             }
+            finally
+            {
+                if (!keepAliveForSse)
+                {
+                    try { stream.Dispose(); } catch {}
+                    try { client.Dispose(); } catch {}
+                }
+            }
         }
-    }
 
     private async Task HandleCoverRequestAsync(NetworkStream stream, CancellationToken ct)
     {
@@ -432,7 +498,7 @@ public sealed class WebPlaybackServer : IDisposable
         await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
-    private async Task HandleSseEventsAsync(NetworkStream stream, CancellationToken ct)
+    private async Task HandleSseEventsAsync(TcpClient client, NetworkStream stream, CancellationToken ct)
     {
         string headers = "HTTP/1.1 200 OK\r\n" +
                          "Content-Type: text/event-stream\r\n" +
@@ -441,25 +507,49 @@ public sealed class WebPlaybackServer : IDisposable
                          "Access-Control-Allow-Origin: *\r\n\r\n";
 
         byte[] headerBytes = Encoding.ASCII.GetBytes(headers);
-        await stream.WriteAsync(headerBytes.AsMemory(0, headerBytes.Length), ct).ConfigureAwait(false);
-        await stream.FlushAsync(ct).ConfigureAwait(false);
+        using (var initWriteCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            initWriteCts.CancelAfter(TimeSpan.FromSeconds(3));
+            await stream.WriteAsync(headerBytes.AsMemory(0, headerBytes.Length), initWriteCts.Token).ConfigureAwait(false);
+            await stream.FlushAsync(initWriteCts.Token).ConfigureAwait(false);
+        }
 
+        var sseClient = new SseClient(client, stream, ct);
         lock (_sseLock)
         {
-            _sseStreams.Add(stream);
+            _sseClients.Add(sseClient);
         }
 
         var syncJson = BuildStateJson("sync");
-        await SendSseDataAsync(stream, syncJson, ct).ConfigureAwait(false);
+        sseClient.Channel.Writer.TryWrite($"data: {syncJson}\r\n\r\n");
+
+        using var heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(sseClient.Cts.Token);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!heartbeatCts.Token.IsCancellationRequested)
+                {
+                    await Task.Delay(15000, heartbeatCts.Token).ConfigureAwait(false);
+                    sseClient.Channel.Writer.TryWrite(": ping\r\n\r\n");
+                }
+            }
+            catch {}
+        }, heartbeatCts.Token);
 
         try
         {
-            while (!ct.IsCancellationRequested && !_isDisposed)
+            var reader = sseClient.Channel.Reader;
+            while (await reader.WaitToReadAsync(sseClient.Cts.Token).ConfigureAwait(false))
             {
-                await Task.Delay(15000, ct).ConfigureAwait(false);
-                byte[] ping = Encoding.UTF8.GetBytes(": ping\r\n\r\n");
-                await stream.WriteAsync(ping.AsMemory(0, ping.Length), ct).ConfigureAwait(false);
-                await stream.FlushAsync(ct).ConfigureAwait(false);
+                while (reader.TryRead(out var msg))
+                {
+                    byte[] bytes = Encoding.UTF8.GetBytes(msg);
+                    using var writeCts = CancellationTokenSource.CreateLinkedTokenSource(sseClient.Cts.Token);
+                    writeCts.CancelAfter(TimeSpan.FromSeconds(3));
+                    await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), writeCts.Token).ConfigureAwait(false);
+                    await stream.FlushAsync(writeCts.Token).ConfigureAwait(false);
+                }
             }
         }
         catch
@@ -467,10 +557,12 @@ public sealed class WebPlaybackServer : IDisposable
         }
         finally
         {
+            try { heartbeatCts.Cancel(); } catch {}
             lock (_sseLock)
             {
-                _sseStreams.Remove(stream);
+                _sseClients.Remove(sseClient);
             }
+            sseClient.Dispose();
         }
     }
 
@@ -569,7 +661,7 @@ public sealed class WebPlaybackServer : IDisposable
     public void BroadcastState(string eventType)
     {
         var json = BuildStateJson(eventType);
-        _ = BroadcastSseAsync(json);
+        BroadcastSse(json);
     }
 
     private string BuildStateJson(string eventType)
@@ -652,37 +744,20 @@ public sealed class WebPlaybackServer : IDisposable
                 .Replace("\n", "\\n");
     }
 
-    private async Task BroadcastSseAsync(string json)
+    private void BroadcastSse(string json)
     {
-        byte[] bytes = Encoding.UTF8.GetBytes($"data: {json}\r\n\r\n");
-        List<NetworkStream> targets;
+        string message = $"data: {json}\r\n\r\n";
+        List<SseClient> targets;
         lock (_sseLock)
         {
-            targets = new List<NetworkStream>(_sseStreams);
+            if (_sseClients.Count == 0) return;
+            targets = new List<SseClient>(_sseClients);
         }
 
-        foreach (var stream in targets)
+        foreach (var client in targets)
         {
-            try
-            {
-                await stream.WriteAsync(bytes.AsMemory(0, bytes.Length)).ConfigureAwait(false);
-                await stream.FlushAsync().ConfigureAwait(false);
-            }
-            catch
-            {
-                lock (_sseLock)
-                {
-                    _sseStreams.Remove(stream);
-                }
-            }
+            client.Channel.Writer.TryWrite(message);
         }
-    }
-
-    private static async Task SendSseDataAsync(NetworkStream stream, string json, CancellationToken ct)
-    {
-        byte[] bytes = Encoding.UTF8.GetBytes($"data: {json}\r\n\r\n");
-        await stream.WriteAsync(bytes.AsMemory(0, bytes.Length), ct).ConfigureAwait(false);
-        await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
     private static async Task SendResponseAsync(NetworkStream stream, int statusCode, string statusText, string contentType, string content, CancellationToken ct)
@@ -759,7 +834,7 @@ public sealed class WebPlaybackServer : IDisposable
             </main>
           </div>
           <audio id="audioElement" preload="auto"></audio>
-          <script src="/app.js?v=20260906_2" type="module"></script>
+          <script src="/app.js?v=20260906_3" type="module"></script>
         </body>
         </html>
         """;
@@ -810,6 +885,15 @@ public sealed class WebPlaybackServer : IDisposable
                 _cts?.Cancel();
             }
             catch {}
+
+            lock (_sseLock)
+            {
+                foreach (var client in _sseClients)
+                {
+                    try { client.Dispose(); } catch {}
+                }
+                _sseClients.Clear();
+            }
 
             try
             {
