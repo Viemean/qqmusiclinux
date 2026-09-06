@@ -26,6 +26,11 @@ mkdir -p "$STAGE_DIR/usr/bin"
 cp "$BIN_PATH" "$STAGE_DIR/usr/bin/qqmusic-tui"
 chmod 755 "$STAGE_DIR/usr/bin/qqmusic-tui"
 
+if [ -d "bin/Release/net10.0/${RID}/publish/www" ]; then
+    mkdir -p "$STAGE_DIR/usr/share/qqmusic-tui/www"
+    cp -r "bin/Release/net10.0/${RID}/publish/www/"* "$STAGE_DIR/usr/share/qqmusic-tui/www/"
+fi
+
 # 计算已安装文件总大小（字节）
 INSTALLED_SIZE=$(du -sb "$STAGE_DIR/usr" | awk '{print $1}')
 BUILD_DATE=$(date +%s)
@@ -45,8 +50,11 @@ license = MIT
 depend = gstreamer
 depend = gst-plugins-base
 depend = gst-plugins-good
-optdepend = ffmpeg: cover art extraction and display
-optdepend = imagemagick: rounded corner cover rendering
+optdepend = ffmpeg: cover art extraction and display, audio recording
+optdepend = imagemagick: rounded corner cover rendering in modern terminals
+optdepend = gst-libav: additional audio codecs (AAC/M4A) support
+optdepend = wl-clipboard: Wayland clipboard support for copying song links
+optdepend = xclip: X11 clipboard support for copying song links
 provides = qqmusic-tui
 conflict = qqmusic-tui
 EOF

@@ -18,9 +18,11 @@ jobs:
       matrix:
         include:
           - arch: x86_64
-            os: ubuntu-latest
+            deb_arch: amd64
+            os: ubuntu-22.04
             rid: linux-x64
           - arch: aarch64
+            deb_arch: arm64
             os: ubuntu-24.04-arm
             rid: linux-arm64
 
@@ -36,7 +38,7 @@ jobs:
       - name: Install Native Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgstreamer1.0-dev clang zstd
+          sudo apt-get install -y libgstreamer1.0-dev clang zstd dpkg
 
       - name: Build and Package Arch Linux ZST (${{ matrix.arch }})
         run: |
@@ -47,15 +49,59 @@ jobs:
           fi
           ./build-pkg.sh "$VERSION" 1 "${{ matrix.arch }}" "${{ matrix.rid }}"
 
+      - name: Build and Package Debian DEB (${{ matrix.deb_arch }})
+        run: |
+          chmod +x ./build-deb.sh
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION="0.1.0"
+          fi
+          ./build-deb.sh "$VERSION" 1 "${{ matrix.deb_arch }}" "${{ matrix.rid }}"
+
       - name: Upload Package Artifact
         uses: actions/upload-artifact@v4
         with:
           name: qqmusic-tui-pkg-${{ matrix.arch }}
-          path: qqmusic-tui-bin-*.pkg.tar.zst
+          path: |
+            qqmusic-tui-bin-*.pkg.tar.zst
+            qqmusic-tui_*.deb
+
+  build-alpine-arm64:
+    name: Build Alpine aarch64 APK
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build and Package Alpine aarch64 APK in Docker Container
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            mcr.microsoft.com/dotnet/sdk:10.0-alpine \
+            sh -c "
+              set -euo pipefail
+              apk update
+              apk add --no-cache bash alpine-sdk clang lld gstreamer-dev gst-plugins-base-dev
+              mkdir -p /root/.abuild
+              abuild-keygen -a -i -n
+              chmod +x ./build-apk.sh
+              VERSION=\"\${GITHUB_REF_NAME#v}\"
+              if [ -z \"\$VERSION\" ] || [ \"\$VERSION\" = \"\${GITHUB_REF_NAME}\" ]; then
+                VERSION=\"0.1.0\"
+              fi
+              ./build-apk.sh \"\$VERSION\" 1 aarch64 linux-musl-arm64
+            "
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqmusic-tui-apk-aarch64
+          path: qqmusic-tui-*.apk
 
   release:
     name: Publish GitHub Release
-    needs: build
+    needs: [build, build-alpine-arm64]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -68,5 +114,9 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.pkg.tar.zst
+          files: |
+            dist/*.pkg.tar.zst
+            dist/*.deb
+            dist/*.apk
           generate_release_notes: true
+
