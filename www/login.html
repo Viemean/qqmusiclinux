@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QQ音乐扫码登录</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #121212;
+      color: #e0e0e0;
+      display: flex;
+      min-height: 100vh;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+    .card {
+      background: #1e1e1e;
+      border: 1px solid #2e2e2e;
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+      width: 100%;
+      max-width: 320px;
+    }
+    h2 { font-size: 1.25rem; margin-bottom: 16px; color: #fff; }
+    .qr-wrap {
+      width: 222px;
+      height: 222px;
+      margin: 0 auto 16px;
+      background: #fff;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .qr-wrap img {
+      width: 222px;
+      height: 222px;
+      display: block;
+      image-rendering: pixelated;
+    }
+    .status {
+      font-size: 0.9rem;
+      color: #aaa;
+      margin-bottom: 16px;
+      min-height: 1.2rem;
+    }
+    .btn {
+      background: #31c27c;
+      color: #fff;
+      border: none;
+      padding: 8px 20px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .btn:hover { background: #2baa6c; }
+    .success { color: #31c27c; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>QQ音乐 扫码登录</h2>
+    <div class="qr-wrap">
+      <img id="qrImg" src="/qr.png" alt="登录二维码" onclick="refreshQr()">
+    </div>
+    <div class="status" id="statusText">正在初始化二维码...</div>
+    <button class="btn" id="refreshBtn" onclick="refreshQr()">刷新二维码</button>
+  </div>
+
+  <script>
+    let currentVersion = -1;
+
+    async function poll() {
+      try {
+        const res = await fetch('/status');
+        const data = await res.json();
+        
+        if (data.status) {
+          document.getElementById('statusText').innerText = data.status;
+        }
+
+        if (data.ready && data.version !== currentVersion) {
+          currentVersion = data.version;
+          document.getElementById('qrImg').src = '/qr.png?v=' + data.version + '&t=' + Date.now();
+        }
+
+        if (data.success) {
+          const statusEl = document.getElementById('statusText');
+          statusEl.className = 'status success';
+          statusEl.innerText = '登录成功 [' + (data.nick || 'QQ用户') + ']，终端已同步';
+          document.getElementById('refreshBtn').style.display = 'none';
+          return;
+        }
+      } catch (e) {}
+
+      setTimeout(poll, 1500);
+    }
+
+    async function refreshQr() {
+      document.getElementById('statusText').innerText = '正在刷新二维码...';
+      try {
+        await fetch('/refresh', { method: 'POST' });
+      } catch (e) {}
+    }
+
+    poll();
+  </script>
+</body>
+</html>

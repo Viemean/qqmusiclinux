@@ -54,10 +54,17 @@ public sealed class LoginDialog : Window
             Y = 0
         };
 
+        var refreshBtn = new Button
+        {
+            Text = "刷新 (R)",
+            X = Pos.Right(qrTabBtn) + 2,
+            Y = 0
+        };
+
         var logoutBtn = new Button
         {
             Text = "退出账号",
-            X = Pos.Right(qrTabBtn) + 2,
+            X = Pos.Right(refreshBtn) + 2,
             Y = 0
         };
 
@@ -68,7 +75,7 @@ public sealed class LoginDialog : Window
             Y = 0
         };
 
-        Add(webTabBtn, qrTabBtn, logoutBtn, closeBtn);
+        Add(webTabBtn, qrTabBtn, refreshBtn, logoutBtn, closeBtn);
 
         // ==================== 1. 网页登录容器 (默认激活) ====================
         _webContainer = new View
@@ -197,6 +204,8 @@ public sealed class LoginDialog : Window
             _qrContainer.Visible = true;
         };
 
+        refreshBtn.Accepting += (s, e) => RequestRefresh();
+
         logoutBtn.Accepting += (s, e) =>
         {
             LoginService.Logout();
@@ -215,6 +224,11 @@ public sealed class LoginDialog : Window
                 k.Handled = true;
                 CloseSelf();
             }
+            else if (k.AsRune.Value == 'r' || k.AsRune.Value == 'R')
+            {
+                k.Handled = true;
+                RequestRefresh();
+            }
             else if ((k.AsRune.Value == 'b' || k.AsRune.Value == 'B') && _httpServer != null && _httpServer.IsRunning)
             {
                 k.Handled = true;
@@ -228,9 +242,21 @@ public sealed class LoginDialog : Window
         MikuTheme.ApplyTo(this, MikuTheme.Dialog);
     }
 
+    private volatile bool _refreshRequested;
+
+    private void RequestRefresh()
+    {
+        _refreshRequested = true;
+    }
+
     private void StartQrLoginFlow()
     {
         _httpServer ??= new LoginHttpServer();
+        _httpServer.RefreshRequested += () =>
+        {
+            RequestRefresh();
+            return Task.CompletedTask;
+        };
         _httpServer.Start(null);
 
         Application.Invoke(() =>
@@ -241,77 +267,96 @@ public sealed class LoginDialog : Window
 
         Task.Run(async () =>
         {
-            var qr = await LoginService.FetchQrCodeAsync(_cts.Token);
-            if (qr == null)
-            {
-                Application.Invoke(() =>
-                {
-                    _webStatusLabel.Text = "状态: 二维码生成失败，请检查网络";
-                    _qrStatusLabel.Text = "状态: 二维码生成失败，请检查网络";
-                });
-                _httpServer?.UpdateStatus("二维码生成失败，请检查网络");
-                return;
-            }
-
-            _httpServer.UpdateQrCode(qr.PngBytes);
-            _httpServer.UpdateStatus("等待扫码...");
-
-            Application.Invoke(() =>
-            {
-                _webStatusLabel.Text = "状态: 等待扫码...";
-                _qrStatusLabel.Text = "状态: 等待扫码...";
-                _qrView.SetSource(new ObservableCollection<string>(qr.AsciiLines));
-                _qrTipLabel.Text = $"手机扫码或浏览器打开: {_httpServer.LanUrl}";
-            });
-
-            // 轮询登录状态
             while (!_cts.Token.IsCancellationRequested)
             {
-                await Task.Delay(2000, _cts.Token);
-                var status = await LoginService.PollQrStatusAsync(qr.QrSig, qr.PtqrToken, _cts.Token);
+                _refreshRequested = false;
 
-                if (status.Code == 0) // 成功
+                Application.Invoke(() =>
                 {
-                    _httpServer?.UpdateStatus($"登录成功 [{UserSession.Current.Nick}]", isSuccess: true, nick: UserSession.Current.Nick);
+                    _webStatusLabel.Text = "状态: 正在拉取二维码...";
+                    _qrStatusLabel.Text = "状态: 正在拉取二维码...";
+                });
+                _httpServer?.UpdateStatus("正在获取二维码...");
+
+                var qr = await LoginService.FetchQrCodeAsync(_cts.Token);
+                if (qr == null)
+                {
                     Application.Invoke(() =>
                     {
-                        _webStatusLabel.Text = $"状态: 登录成功 [{UserSession.Current.Nick}]";
-                        _qrStatusLabel.Text = $"状态[0]: 登录成功 [{UserSession.Current.Nick}]";
-                        _onLoginSuccess?.Invoke();
+                        _webStatusLabel.Text = "状态: 二维码生成失败，按 R 重试";
+                        _qrStatusLabel.Text = "状态: 二维码生成失败，按 R 重试";
                     });
-                    await Task.Delay(1500);
-                    _httpServer?.Stop();
-                    Application.Invoke(CloseSelf);
-                    break;
+                    _httpServer?.UpdateStatus("二维码生成失败，请点击刷新重试");
+
+                    for (int i = 0; i < 15 && !_refreshRequested && !_cts.Token.IsCancellationRequested; i++)
+                    {
+                        try { await Task.Delay(200, _cts.Token); } catch { break; }
+                    }
+                    continue;
                 }
-                else if (status.Code == 67) // 认证中
+
+                _httpServer?.UpdateQrCode(qr.PngBytes);
+                _httpServer?.UpdateStatus("等待手机扫码...");
+
+                Application.Invoke(() =>
                 {
-                    _httpServer?.UpdateStatus("已扫码，请在手机上确认授权...");
-                    Application.Invoke(() =>
-                    {
-                        _webStatusLabel.Text = "状态: 已扫码，请在手机上确认授权...";
-                        _qrStatusLabel.Text = "状态[67]: 已扫码，请在手机上确认授权...";
-                    });
-                }
-                else if (status.Code == 65) // 失效
+                    _webStatusLabel.Text = "状态: 等待手机扫码...";
+                    _qrStatusLabel.Text = "状态: 等待手机扫码...";
+                    _qrView.SetSource(new ObservableCollection<string>(qr.AsciiLines));
+                    _qrTipLabel.Text = $"手机扫码或浏览器打开: {_httpServer?.LanUrl} (按 R 刷新)";
+                });
+
+                // 轮询该二维码状态
+                while (!_cts.Token.IsCancellationRequested && !_refreshRequested)
                 {
-                    _httpServer?.UpdateStatus("二维码已失效，请重新打开登录窗口");
-                    Application.Invoke(() =>
+                    try { await Task.Delay(2000, _cts.Token); } catch { break; }
+                    if (_refreshRequested) break;
+
+                    var status = await LoginService.PollQrStatusAsync(qr.QrSig, qr.PtqrToken, _cts.Token);
+
+                    if (status.Code == 0) // 成功
                     {
-                        _webStatusLabel.Text = "状态: 二维码已失效，请重新打开登录窗口";
-                        _qrStatusLabel.Text = "状态[65]: 二维码已失效，请重新打开登录窗口";
-                    });
-                    _httpServer?.Stop();
-                    break;
-                }
-                else
-                {
-                    _httpServer?.UpdateStatus(status.Message ?? "等待扫码...");
-                    Application.Invoke(() =>
+                        _httpServer?.UpdateStatus($"登录成功 [{UserSession.Current.Nick}]", isSuccess: true, nick: UserSession.Current.Nick);
+                        Application.Invoke(() =>
+                        {
+                            _webStatusLabel.Text = $"状态: 登录成功 [{UserSession.Current.Nick}]";
+                            _qrStatusLabel.Text = $"状态[0]: 登录成功 [{UserSession.Current.Nick}]";
+                            _onLoginSuccess?.Invoke();
+                        });
+                        try { await Task.Delay(1500, _cts.Token); } catch { }
+                        _httpServer?.Stop();
+                        Application.Invoke(CloseSelf);
+                        return;
+                    }
+                    else if (status.Code == 67) // 认证中
                     {
-                        _webStatusLabel.Text = $"状态[{status.Code}]: {status.Message}";
-                        _qrStatusLabel.Text = $"状态[{status.Code}]: {status.Message}";
-                    });
+                        _httpServer?.UpdateStatus("已扫码，请在手机上确认授权...");
+                        Application.Invoke(() =>
+                        {
+                            _webStatusLabel.Text = "状态: 已扫码，请在手机上确认授权...";
+                            _qrStatusLabel.Text = "状态[67]: 已扫码，请在手机上确认授权...";
+                        });
+                    }
+                    else if (status.Code == 65) // 失效：自动重启外循环换取新二维码
+                    {
+                        _httpServer?.UpdateStatus("二维码已失效，正在自动换新...");
+                        Application.Invoke(() =>
+                        {
+                            _webStatusLabel.Text = "状态[65]: 二维码已失效，正在自动换新...";
+                            _qrStatusLabel.Text = "状态[65]: 二维码已失效，正在自动换新...";
+                        });
+                        try { await Task.Delay(1000, _cts.Token); } catch { }
+                        break;
+                    }
+                    else
+                    {
+                        _httpServer?.UpdateStatus(status.Message ?? "等待扫码...");
+                        Application.Invoke(() =>
+                        {
+                            _webStatusLabel.Text = $"状态[{status.Code}]: {status.Message}";
+                            _qrStatusLabel.Text = $"状态[{status.Code}]: {status.Message}";
+                        });
+                    }
                 }
             }
         }, _cts.Token);
