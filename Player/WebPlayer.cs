@@ -22,6 +22,7 @@ public sealed class WebPlayer : IPlayer
     public double TotalDurationSeconds { get; private set; }
     public int Volume { get; private set; } = 80;
     public bool AudioOutputEnabled => _server.AudioOutputEnabled;
+    public WebPlaybackServer Server => _server;
     public string Url => _server.LocalUrl;
     public int Port => _server.Port;
 

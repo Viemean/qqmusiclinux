@@ -62,6 +62,8 @@ public sealed partial class MainWindow
         {
             _standaloneWebServer.CurrentSong = song;
             _standaloneWebServer.IsCurrentSongFavorite = isFav;
+            _standaloneWebServer.ActualQualityTier = _actualQualityTier;
+            _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
             _standaloneWebServer.CurrentPlayUrl = null;
             _standaloneWebServer.IsPlaying = false;
             _standaloneWebServer.CurrentPositionSeconds = 0;
@@ -190,6 +192,8 @@ public sealed partial class MainWindow
             if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
             {
                 _standaloneWebServer.CurrentPlayUrl = playUrl;
+                _standaloneWebServer.ActualQualityTier = _actualQualityTier;
+                _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
                 _standaloneWebServer.TotalDurationSeconds = song.Duration;
                 _standaloneWebServer.CurrentPositionSeconds = startPosition;
                 _standaloneWebServer.IsPlaying = true;

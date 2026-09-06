@@ -72,8 +72,20 @@ public sealed partial class MainWindow
                 if (!string.IsNullOrEmpty(playUrl))
                 {
                     _activeSong.Quality = qualityName;
-                    await _player.PlayAsync(playUrl, _activeSong.Duration, currentPos);
+                    if (!_isTuiAudioDisabled)
+                    {
+                        await _player.PlayAsync(playUrl, _activeSong.Duration, currentPos);
+                    }
                     Application.Invoke(UpdatePlayerStatus);
+
+                    if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+                    {
+                        _standaloneWebServer.CurrentPlayUrl = playUrl;
+                        _standaloneWebServer.ActualQualityTier = _actualQualityTier;
+                        _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
+                        _standaloneWebServer.CurrentPositionSeconds = currentPos;
+                        _standaloneWebServer.BroadcastState("play");
+                    }
                 }
                 else
                 {
@@ -81,6 +93,15 @@ public sealed partial class MainWindow
                     {
                         _controlBar.UpdateStatus($"[切换失败] {_activeSong.Title} 暂无 {AudioQualityHelper.GetBadge(newTier)} 音源");
                     });
+                }
+            }
+            else
+            {
+                if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+                {
+                    _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
+                    _standaloneWebServer.ActualQualityTier = _actualQualityTier;
+                    _standaloneWebServer.BroadcastState("quality_change");
                 }
             }
         });

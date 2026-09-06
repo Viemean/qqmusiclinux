@@ -142,28 +142,9 @@ public sealed partial class MainWindow : Window
 
         if (_player is WebPlayer webPlayer)
         {
-            webPlayer.NextRequested += () => Application.Invoke(async () =>
-            {
-                if (_currentViewMode == ViewMode.GuessRecommend)
-                {
-                    await PlayNextRadioTrackAsync();
-                }
-                else
-                {
-                    await PlayNextInCurrentListAsync();
-                }
-            });
-            webPlayer.PreviousRequested += () => Application.Invoke(async () =>
-            {
-                if (_currentViewMode != ViewMode.GuessRecommend)
-                {
-                    await PlayPrevInCurrentListAsync();
-                }
-            });
-            webPlayer.TogglePlayRequested += () => Application.Invoke(async () =>
-            {
-                await TogglePlayOrPauseAsync();
-            });
+            _standaloneWebServer = webPlayer.Server;
+            _webServerPort = webPlayer.Port;
+            AttachWebServerEvents(_standaloneWebServer);
         }
 
         // 载入持久化登录凭证并在后台自动补齐官方 musickey
@@ -1402,86 +1383,7 @@ public sealed partial class MainWindow : Window
             _standaloneWebServer.ActualQualityTier = _actualQualityTier;
             _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
 
-            _standaloneWebServer.NextRequested += () => Application.Invoke(async () =>
-            {
-                if (_currentViewMode == ViewMode.GuessRecommend)
-                    await PlayNextRadioTrackAsync();
-                else
-                    await PlayNextInCurrentListAsync();
-            });
-            _standaloneWebServer.PreviousRequested += () => Application.Invoke(async () =>
-            {
-                if (_currentViewMode != ViewMode.GuessRecommend)
-                    await PlayPrevInCurrentListAsync();
-            });
-            _standaloneWebServer.TogglePlayRequested += () => Application.Invoke(async () =>
-            {
-                await TogglePlayOrPauseAsync();
-            });
-            _standaloneWebServer.ToggleFavoriteRequested += () => Application.Invoke(async () =>
-            {
-                var targetSong = _activeSong;
-                if (targetSong != null)
-                {
-                    await ToggleSongFavoriteAsync(targetSong);
-                }
-            });
-            _standaloneWebServer.ToggleModeRequested += () => Application.Invoke(TogglePlaybackMode);
-            _standaloneWebServer.ToggleQualityRequested += () => Application.Invoke(async () =>
-            {
-                await CycleQualityTierAsync(allowHiRes: false);
-            });
-            _standaloneWebServer.SeekRequested += sec =>
-            {
-                if (_isTuiAudioDisabled)
-                {
-                    _webVirtualPosition = sec;
-                    Application.Invoke(() =>
-                    {
-                        UpdateProgress(sec);
-                        UpdateLyrics(sec);
-                    });
-                }
-                else
-                {
-                    _ = _player.SeekAsync(sec);
-                }
-            };
-            _standaloneWebServer.VolumeRequested += vol =>
-            {
-                // 音量仅由 Web 独立掌控，无需同步 TUI
-                _standaloneWebServer.Volume = vol;
-            };
-            _standaloneWebServer.ProgressReported += (pos, dur) =>
-            {
-                if (_isTuiAudioDisabled)
-                {
-                    _webVirtualPosition = pos;
-                    Application.Invoke(() =>
-                    {
-                        UpdateProgress(pos);
-                        UpdateLyrics(pos);
-                    });
-                }
-            };
-            _standaloneWebServer.PlaybackEnded += () =>
-            {
-                Application.Invoke(async () =>
-                {
-                    if (_currentViewMode == ViewMode.GuessRecommend)
-                    {
-                        await PlayNextRadioTrackAsync();
-                    }
-                    else if (_currentPlaybackMode == PlaybackMode.SingleLoop && _activeSong != null)
-                    {
-                        await PlaySongAsync(_activeSong, 0);
-                    }
-                    else
-                    {
-                        await PlayNextInCurrentListAsync(isAutoPlayback: true);
-                    }
-                });
-            };
+            AttachWebServerEvents(_standaloneWebServer);
 
             var ok = _standaloneWebServer.Start(_webServerPort, initialAudioOutput: true);
             if (ok)
@@ -1503,6 +1405,89 @@ public sealed partial class MainWindow : Window
         {
             AppLogger.Error("MainWindow", "StartStandaloneWebServer error", ex);
         }
+    }
+
+    private void AttachWebServerEvents(WebPlaybackServer server)
+    {
+        server.NextRequested += () => Application.Invoke(async () =>
+        {
+            if (_currentViewMode == ViewMode.GuessRecommend)
+                await PlayNextRadioTrackAsync();
+            else
+                await PlayNextInCurrentListAsync();
+        });
+        server.PreviousRequested += () => Application.Invoke(async () =>
+        {
+            if (_currentViewMode != ViewMode.GuessRecommend)
+                await PlayPrevInCurrentListAsync();
+        });
+        server.TogglePlayRequested += () => Application.Invoke(async () =>
+        {
+            await TogglePlayOrPauseAsync();
+        });
+        server.ToggleFavoriteRequested += () => Application.Invoke(async () =>
+        {
+            var targetSong = _activeSong;
+            if (targetSong != null)
+            {
+                await ToggleSongFavoriteAsync(targetSong);
+            }
+        });
+        server.ToggleModeRequested += () => Application.Invoke(TogglePlaybackMode);
+        server.ToggleQualityRequested += () => Application.Invoke(async () =>
+        {
+            await CycleQualityTierAsync(allowHiRes: false);
+        });
+        server.SeekRequested += sec =>
+        {
+            if (_isTuiAudioDisabled || _player is WebPlayer)
+            {
+                _webVirtualPosition = sec;
+                Application.Invoke(() =>
+                {
+                    UpdateProgress(sec);
+                    UpdateLyrics(sec);
+                });
+            }
+            else
+            {
+                _ = _player.SeekAsync(sec);
+            }
+        };
+        server.VolumeRequested += vol =>
+        {
+            server.Volume = vol;
+        };
+        server.ProgressReported += (pos, dur) =>
+        {
+            if (_isTuiAudioDisabled || _player is WebPlayer)
+            {
+                _webVirtualPosition = pos;
+                Application.Invoke(() =>
+                {
+                    UpdateProgress(pos);
+                    UpdateLyrics(pos);
+                });
+            }
+        };
+        server.PlaybackEnded += () =>
+        {
+            Application.Invoke(async () =>
+            {
+                if (_currentViewMode == ViewMode.GuessRecommend)
+                {
+                    await PlayNextRadioTrackAsync();
+                }
+                else if (_currentPlaybackMode == PlaybackMode.SingleLoop && _activeSong != null)
+                {
+                    await PlaySongAsync(_activeSong, 0);
+                }
+                else
+                {
+                    await PlayNextInCurrentListAsync(isAutoPlayback: true);
+                }
+            });
+        };
     }
 
     private bool RestartStandaloneWebServer(int port)

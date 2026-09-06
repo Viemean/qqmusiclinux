@@ -47,6 +47,8 @@ class ElectronMusicPlayer {
     this.volNum = document.getElementById('volNum');
     this.btnVolume = document.getElementById('btnVolume');
     this.audioElement = document.getElementById('audioElement');
+    this.playbackNotice = document.getElementById('playbackNotice');
+    this.noticeTimer = null;
 
     // 状态
     this.state = {
@@ -233,6 +235,7 @@ class ElectronMusicPlayer {
         if (this.pendingAutoplay && this.state.isPlaying && this.audioElement.src) {
           this.audioElement.play().then(() => {
             this.pendingAutoplay = false;
+            this.hideNotice();
           }).catch(() => {});
         }
       }
@@ -243,9 +246,24 @@ class ElectronMusicPlayer {
       if (this.pendingAutoplay && this.state.isPlaying && this.audioElement.src) {
         this.audioElement.play().then(() => {
           this.pendingAutoplay = false;
+          this.hideNotice();
         }).catch(() => {});
       }
     }, { passive: true });
+
+    if (this.playbackNotice) {
+      this.playbackNotice.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (this.pendingAutoplay && this.state.isPlaying && this.audioElement.src) {
+          this.audioElement.play().then(() => {
+            this.pendingAutoplay = false;
+            this.hideNotice();
+          }).catch(() => {});
+        } else {
+          this.hideNotice();
+        }
+      });
+    }
 
     window.addEventListener('online', () => {
       this.reconnectSSE();
@@ -322,6 +340,19 @@ class ElectronMusicPlayer {
 
     this.audioElement.addEventListener('ended', () => {
       this.sendAction('/api/action', { action: 'ended' });
+    });
+
+    this.audioElement.addEventListener('error', () => {
+      const err = this.audioElement.error;
+      console.warn('Audio playback error:', err);
+      if (err) {
+        if (err.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED) {
+          this.showNotice('当前浏览器不支持该音质格式，正在切换音质...', 3500);
+          this.sendAction('/api/quality');
+        } else if (err.code === MediaError.MEDIA_ERR_NETWORK) {
+          this.showNotice('音频网络加载失败，请检查网络连接', 3000);
+        }
+      }
     });
   }
 
@@ -530,9 +561,11 @@ class ElectronMusicPlayer {
         if (data.isPlaying) {
           this.audioElement.play().then(() => {
             this.pendingAutoplay = false;
+            this.hideNotice();
           }).catch((err) => {
             console.warn('Autoplay waiting for gesture:', err);
             this.pendingAutoplay = true;
+            this.showNotice('点击页面任意处开始播放');
           });
         }
         this.updateMediaSessionPosition();
@@ -546,14 +579,20 @@ class ElectronMusicPlayer {
 
       if (this.state.isPlaying) {
         if (this.audioElement.paused && this.audioElement.src) {
-          this.audioElement.play().catch((err) => {
+          this.audioElement.play().then(() => {
+            this.pendingAutoplay = false;
+            this.hideNotice();
+          }).catch((err) => {
             console.warn('Play gesture needed:', err);
+            this.pendingAutoplay = true;
+            this.showNotice('点击页面任意处开始播放');
           });
         }
       } else {
         if (!this.audioElement.paused) {
           this.audioElement.pause();
         }
+        this.hideNotice();
       }
       this.updateMediaSessionPosition();
     }
@@ -607,6 +646,30 @@ class ElectronMusicPlayer {
     }
   }
 
+  showNotice(text, autoHideMs = 0) {
+    if (!this.playbackNotice) return;
+    this.playbackNotice.textContent = text;
+    this.playbackNotice.style.display = 'block';
+    if (this.noticeTimer) {
+      clearTimeout(this.noticeTimer);
+      this.noticeTimer = null;
+    }
+    if (autoHideMs > 0) {
+      this.noticeTimer = setTimeout(() => {
+        this.hideNotice();
+      }, autoHideMs);
+    }
+  }
+
+  hideNotice() {
+    if (!this.playbackNotice) return;
+    this.playbackNotice.style.display = 'none';
+    if (this.noticeTimer) {
+      clearTimeout(this.noticeTimer);
+      this.noticeTimer = null;
+    }
+  }
+
   handleTrackChange(song) {
     if (!song) return;
 
@@ -619,10 +682,6 @@ class ElectronMusicPlayer {
     this.state.currentSongMid = song.mid || '';
     this.trackTitle.textContent = song.title || '未知曲目';
     this.trackArtist.textContent = `${song.artist || '未知歌手'}${song.album ? ` · ${song.album}` : ''}`;
-
-    if (song.quality) {
-      this.updateQualityUI(song.quality);
-    }
 
     if (song.duration) {
       this.state.totalDuration = song.duration;
