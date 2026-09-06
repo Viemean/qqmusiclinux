@@ -19,7 +19,7 @@ jobs:
         include:
           - arch: x86_64
             deb_arch: amd64
-            os: ubuntu-22.04
+            os: ubuntu-latest
             rid: linux-x64
           - arch: aarch64
             deb_arch: arm64
@@ -37,15 +37,15 @@ jobs:
 
       - name: Install Native Build Dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgstreamer1.0-dev clang zstd dpkg
+          sudo apt-get update || true
+          sudo apt-get install -y --no-install-recommends libgstreamer1.0-dev clang zstd dpkg
 
       - name: Build and Package Arch Linux ZST (${{ matrix.arch }})
         run: |
           chmod +x ./build-pkg.sh
           VERSION="${GITHUB_REF_NAME#v}"
           if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
-            VERSION="0.1.0"
+            VERSION="0.1.3"
           fi
           ./build-pkg.sh "$VERSION" 1 "${{ matrix.arch }}" "${{ matrix.rid }}"
 
@@ -54,7 +54,7 @@ jobs:
           chmod +x ./build-deb.sh
           VERSION="${GITHUB_REF_NAME#v}"
           if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
-            VERSION="0.1.0"
+            VERSION="0.1.3"
           fi
           ./build-deb.sh "$VERSION" 1 "${{ matrix.deb_arch }}" "${{ matrix.rid }}"
 
@@ -72,6 +72,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Install Docker
+        run: |
+          sudo apt-get update || true
+          sudo apt-get install -y --no-install-recommends docker.io
+          sudo systemctl start docker
 
       - name: Build and Package Alpine aarch64 APK in Docker Container
         run: |
