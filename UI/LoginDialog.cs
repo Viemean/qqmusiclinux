@@ -17,12 +17,20 @@ public sealed class LoginDialog : Dialog
     private readonly CancellationTokenSource _cts = new();
     private LoginHttpServer? _httpServer;
 
+    // 1. 网页登录容器 (默认首选)
+    private readonly View _webContainer;
+    private readonly Label _webLanUrlLabel;
+    private readonly Label _webLocalUrlLabel;
+    private readonly Label _webStatusLabel;
+    private readonly Button _openBrowserBtn;
+
+    // 2. 终端字符扫码容器
     private readonly View _qrContainer;
     private readonly Label _qrStatusLabel;
     private readonly Label _qrTipLabel;
-    private readonly Button _openBrowserBtn;
     private readonly ListView _qrView;
 
+    // 3. Cookie 导入容器
     private readonly View _cookieContainer;
     private readonly TextField _cookieInput;
     private readonly Label _cookieStatusLabel;
@@ -32,15 +40,22 @@ public sealed class LoginDialog : Dialog
         _onLoginSuccess = onLoginSuccess;
 
         Title = "用户登录";
-        Width = 62;
+        Width = 66;
         Height = 28;
         SetScheme(MikuTheme.Dialog);
 
         // 顶部切换按钮
+        var webTabBtn = new Button
+        {
+            Text = "网页登录 (Web)",
+            X = 2,
+            Y = 0
+        };
+
         var qrTabBtn = new Button
         {
-            Text = "扫码登录",
-            X = 2,
+            Text = "终端扫码",
+            X = Pos.Right(webTabBtn) + 2,
             Y = 0
         };
 
@@ -53,7 +68,7 @@ public sealed class LoginDialog : Dialog
 
         var logoutBtn = new Button
         {
-            Text = "退出当前账号",
+            Text = "退出账号",
             X = Pos.Right(cookieTabBtn) + 2,
             Y = 0
         };
@@ -65,15 +80,92 @@ public sealed class LoginDialog : Dialog
             Y = 0
         };
 
-        Add(qrTabBtn, cookieTabBtn, logoutBtn, closeBtn);
+        Add(webTabBtn, qrTabBtn, cookieTabBtn, logoutBtn, closeBtn);
 
-        // 1. 扫码登录容器
+        // ==================== 1. 网页登录容器 (默认激活) ====================
+        _webContainer = new View
+        {
+            X = 0,
+            Y = 2,
+            Width = Dim.Fill(),
+            Height = Dim.Fill(),
+            Visible = true
+        };
+
+        var webTitleLabel = new Label
+        {
+            Text = "【手机 / 外部浏览器 协同扫码】",
+            X = 2,
+            Y = 1
+        };
+        _webContainer.Add(webTitleLabel);
+
+        var webDescLabel = new Label
+        {
+            Text = "服务已全网卡绑定 (0.0.0.0)，支持手机/电脑浏览器直接扫码：",
+            X = 2,
+            Y = 3
+        };
+        _webContainer.Add(webDescLabel);
+
+        _webLanUrlLabel = new Label
+        {
+            Text = "▶ 手机/局域网: 正在启动服务...",
+            X = 2,
+            Y = 5
+        };
+        _webContainer.Add(_webLanUrlLabel);
+
+        _webLocalUrlLabel = new Label
+        {
+            Text = "▶ 本机回环地址: 正在启动服务...",
+            X = 2,
+            Y = 7
+        };
+        _webContainer.Add(_webLocalUrlLabel);
+
+        _webStatusLabel = new Label
+        {
+            Text = "状态: 正在初始化二维码...",
+            X = 2,
+            Y = 10
+        };
+        _webContainer.Add(_webStatusLabel);
+
+        _openBrowserBtn = new Button
+        {
+            Text = "打开本机浏览器 (B)",
+            X = 2,
+            Y = 13
+        };
+        _openBrowserBtn.Accepting += (s, e) =>
+        {
+            if (_httpServer != null && _httpServer.IsRunning)
+            {
+                TryOpenBrowser(_httpServer.LocalUrl);
+            }
+        };
+        _webContainer.Add(_openBrowserBtn);
+
+        var webHelpLabel = new Label
+        {
+            Text = "提示: 在手机/外部浏览器打开上方地址完成授权，终端将秒级自动同步。\n支持随时切换至 [终端扫码] 查看字符二维码，或 [Cookie 导入]。",
+            X = 2,
+            Y = 16,
+            Width = Dim.Fill(2)
+        };
+        _webContainer.Add(webHelpLabel);
+
+        Add(_webContainer);
+
+        // ==================== 2. 终端字符扫码容器 ====================
         _qrContainer = new View
         {
             X = 0,
             Y = 2,
             Width = Dim.Fill(),
-            Height = Dim.Fill()
+            Height = Dim.Fill(),
+            Visible = false
         };
 
         _qrStatusLabel = new Label
@@ -102,25 +194,9 @@ public sealed class LoginDialog : Dialog
         };
         _qrContainer.Add(_qrTipLabel);
 
-        _openBrowserBtn = new Button
-        {
-            Text = "浏览器打开 (B)",
-            X = 2,
-            Y = 22,
-            Visible = false
-        };
-        _openBrowserBtn.Accepting += (s, e) =>
-        {
-            if (_httpServer != null && _httpServer.IsRunning)
-            {
-                TryOpenBrowser(_httpServer.Url);
-            }
-        };
-        _qrContainer.Add(_openBrowserBtn);
-
         Add(_qrContainer);
 
-        // 2. Cookie 导入容器
+        // ==================== 3. Cookie 导入容器 ====================
         _cookieContainer = new View
         {
             X = 0,
@@ -165,15 +241,24 @@ public sealed class LoginDialog : Dialog
 
         Add(_cookieContainer);
 
-        // 事件处理
+        // ==================== 事件交互处理 ====================
+        webTabBtn.Accepting += (s, e) =>
+        {
+            _webContainer.Visible = true;
+            _qrContainer.Visible = false;
+            _cookieContainer.Visible = false;
+        };
+
         qrTabBtn.Accepting += (s, e) =>
         {
+            _webContainer.Visible = false;
             _qrContainer.Visible = true;
             _cookieContainer.Visible = false;
         };
 
         cookieTabBtn.Accepting += (s, e) =>
         {
+            _webContainer.Visible = false;
             _qrContainer.Visible = false;
             _cookieContainer.Visible = true;
             _cookieInput.SetFocus();
@@ -182,7 +267,9 @@ public sealed class LoginDialog : Dialog
         logoutBtn.Accepting += (s, e) =>
         {
             LoginService.Logout();
+            _webStatusLabel.Text = "状态: 已退出登录";
             _qrStatusLabel.Text = "状态: 已退出登录";
+            _httpServer?.UpdateStatus("已退出登录");
             _onLoginSuccess?.Invoke();
         };
 
@@ -211,11 +298,11 @@ public sealed class LoginDialog : Dialog
             }
             else if ((k.AsRune.Value == 'b' || k.AsRune.Value == 'B') && _httpServer != null && _httpServer.IsRunning)
             {
-                TryOpenBrowser(_httpServer.Url);
+                TryOpenBrowser(_httpServer.LocalUrl);
             }
         };
 
-        // 启动二维码生成与轮询
+        // 启动网络扫码服务与轮询
         StartQrLoginFlow();
 
         MikuTheme.ApplyTo(this, MikuTheme.Dialog);
@@ -223,6 +310,16 @@ public sealed class LoginDialog : Dialog
 
     private void StartQrLoginFlow()
     {
+        // 1. 无论终端是否支持图形，立即启动 0.0.0.0 Web 登录协同服务
+        _httpServer ??= new LoginHttpServer();
+        _httpServer.Start(null);
+
+        Application.Invoke(() =>
+        {
+            _webLanUrlLabel.Text = $"▶ 手机/局域网: {_httpServer.LanUrl}";
+            _webLocalUrlLabel.Text = $"▶ 本机访问: {_httpServer.LocalUrl}";
+        });
+
         Task.Run(async () =>
         {
             var qr = await LoginService.FetchQrCodeAsync(_cts.Token);
@@ -230,35 +327,26 @@ public sealed class LoginDialog : Dialog
             {
                 Application.Invoke(() =>
                 {
+                    _webStatusLabel.Text = "状态: 二维码生成失败，请检查网络";
                     _qrStatusLabel.Text = "状态: 二维码生成失败，请检查网络";
                 });
+                _httpServer?.UpdateStatus("二维码生成失败，请检查网络");
                 return;
             }
 
-            // 终端不支持图片协议时，启动本地轻量 HTTP 服务协同网页扫码
-            if (!TerminalImageHelper.IsImageSupported)
-            {
-                _httpServer ??= new LoginHttpServer();
-                _httpServer.Start(qr.PngBytes);
-            }
+            // 更新二维码图像至 Web 服务
+            _httpServer.UpdateQrCode(qr.PngBytes);
+            _httpServer.UpdateStatus("等待手机扫码...");
 
             Application.Invoke(() =>
             {
+                _webStatusLabel.Text = "状态: 等待手机扫码 (手机浏览器打开上方链接)...";
                 _qrStatusLabel.Text = "状态: 等待手机扫码...";
                 _qrView.SetSource(new ObservableCollection<string>(qr.AsciiLines));
-                if (_httpServer != null && _httpServer.IsRunning)
-                {
-                    _qrTipLabel.Text = $"网页扫码: {_httpServer.Url}";
-                    _openBrowserBtn.Visible = true;
-                }
-                else
-                {
-                    _qrTipLabel.Text = "可手机扫码，或打开: /tmp/qqmusic_login_qr.png";
-                    _openBrowserBtn.Visible = false;
-                }
+                _qrTipLabel.Text = $"可手机直接扫码，或浏览器打开: {_httpServer.LanUrl}";
             });
 
-            // 轮询状态
+            // 轮询登录状态
             while (!_cts.Token.IsCancellationRequested)
             {
                 await Task.Delay(2000, _cts.Token);
@@ -266,37 +354,44 @@ public sealed class LoginDialog : Dialog
 
                 if (status.Code == 0) // 成功
                 {
-                    _httpServer?.Stop();
+                    _httpServer?.UpdateStatus($"登录成功 [{UserSession.Current.Nick}]", isSuccess: true, nick: UserSession.Current.Nick);
                     Application.Invoke(() =>
                     {
+                        _webStatusLabel.Text = $"状态: 登录成功 [{UserSession.Current.Nick}]";
                         _qrStatusLabel.Text = $"状态[0]: 登录成功 [{UserSession.Current.Nick}]";
                         _onLoginSuccess?.Invoke();
                     });
                     await Task.Delay(1500);
+                    _httpServer?.Stop();
                     Application.Invoke(CloseSelf);
                     break;
                 }
                 else if (status.Code == 67) // 认证中
                 {
+                    _httpServer?.UpdateStatus("已扫码，请在手机上确认授权...");
                     Application.Invoke(() =>
                     {
+                        _webStatusLabel.Text = "状态: 已扫码，请在手机上确认授权...";
                         _qrStatusLabel.Text = "状态[67]: 已扫码，请在手机上确认授权...";
                     });
                 }
                 else if (status.Code == 65) // 失效
                 {
-                    _httpServer?.Stop();
+                    _httpServer?.UpdateStatus("二维码已失效，请重新打开登录窗口");
                     Application.Invoke(() =>
                     {
+                        _webStatusLabel.Text = "状态: 二维码已失效，请重新打开登录窗口";
                         _qrStatusLabel.Text = "状态[65]: 二维码已失效，请重新打开登录窗口";
-                        _openBrowserBtn.Visible = false;
                     });
+                    _httpServer?.Stop();
                     break;
                 }
                 else
                 {
+                    _httpServer?.UpdateStatus(status.Message ?? "等待扫码...");
                     Application.Invoke(() =>
                     {
+                        _webStatusLabel.Text = $"状态[{status.Code}]: {status.Message}";
                         _qrStatusLabel.Text = $"状态[{status.Code}]: {status.Message}";
                     });
                 }

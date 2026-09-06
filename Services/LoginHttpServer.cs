@@ -13,17 +13,23 @@ public sealed class LoginHttpServer : IDisposable
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private byte[]? _qrBytes;
+    private string _currentStatus = "正在初始化二维码...";
+    private bool _isSuccess;
+    private string _userNick = "";
     private readonly object _lock = new();
     private bool _isDisposed;
 
     public int Port { get; private set; }
-    public string Url => Port > 0 ? $"http://127.0.0.1:{Port}/" : "";
+    public string LocalUrl => Port > 0 ? $"http://127.0.0.1:{Port}/" : "";
+    public string LanUrl => Port > 0 ? $"http://{WebPlaybackServer.GetLocalLanIp() ?? "127.0.0.1"}:{Port}/" : "";
+    public string DisplayUrl => LanUrl;
+    public string Url => DisplayUrl;
     public bool IsRunning => _listener != null && !_isDisposed && (_cts?.IsCancellationRequested == false);
 
     /// <summary>
-    /// 启动本地轻量 HTTP 服务
+    /// 启动本地轻量 HTTP 服务 (绑定 0.0.0.0，支持局域网直接扫码)
     /// </summary>
-    /// <param name="initialQrBytes">初始二维码 PNG 二进制字节流</param>
+    /// <param name="initialQrBytes">初始二维码 PNG 二进制字节流 (可为空，就绪后通过 UpdateQrCode 动态推入)</param>
     public bool Start(byte[]? initialQrBytes)
     {
         lock (_lock)
@@ -31,31 +37,34 @@ public sealed class LoginHttpServer : IDisposable
             if (_isDisposed) return false;
             if (IsRunning)
             {
-                UpdateQrCode(initialQrBytes);
+                if (initialQrBytes != null)
+                {
+                    UpdateQrCode(initialQrBytes);
+                }
                 return true;
             }
 
             _qrBytes = initialQrBytes;
             _cts = new CancellationTokenSource();
 
-            // 优先尝试标准常用端口 9898，若被占用则回退至系统动态分配可用端口 (端口 0)
+            // 优先尝试常用端口 9898，若被占用则回退至系统动态分配可用端口 (端口 0)
             int preferredPort = 9898;
             try
             {
-                _listener = new TcpListener(IPAddress.Loopback, preferredPort);
+                _listener = new TcpListener(IPAddress.Any, preferredPort);
                 _listener.Start();
                 Port = preferredPort;
-                AppLogger.Info("LoginHttpServer", $"Started HTTP server on preferred port {Port}");
+                AppLogger.Info("LoginHttpServer", $"Started HTTP server on 0.0.0.0:{Port}");
             }
             catch (Exception ex)
             {
                 AppLogger.Info("LoginHttpServer", $"Preferred port {preferredPort} unavailable ({ex.Message}), falling back to ephemeral port");
                 try
                 {
-                    _listener = new TcpListener(IPAddress.Loopback, 0);
+                    _listener = new TcpListener(IPAddress.Any, 0);
                     _listener.Start();
                     Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-                    AppLogger.Info("LoginHttpServer", $"Started HTTP server on dynamic port {Port}");
+                    AppLogger.Info("LoginHttpServer", $"Started HTTP server on dynamic port {Port} (0.0.0.0)");
                 }
                 catch (Exception fallbackEx)
                 {
@@ -71,13 +80,33 @@ public sealed class LoginHttpServer : IDisposable
     }
 
     /// <summary>
-    /// 动态更新二维码图像字节流（二维码失效刷新时调用）
+    /// 动态更新二维码图像字节流
     /// </summary>
     public void UpdateQrCode(byte[]? qrBytes)
     {
         lock (_lock)
         {
             _qrBytes = qrBytes;
+            if (qrBytes != null && _currentStatus == "正在初始化二维码...")
+            {
+                _currentStatus = "等待手机扫码...";
+            }
+        }
+    }
+
+    /// <summary>
+    /// 更新当前扫码流程状态（供网页端同步提示）
+    /// </summary>
+    public void UpdateStatus(string status, bool isSuccess = false, string nick = "")
+    {
+        lock (_lock)
+        {
+            _currentStatus = status;
+            _isSuccess = isSuccess;
+            if (!string.IsNullOrEmpty(nick))
+            {
+                _userNick = nick;
+            }
         }
     }
 
@@ -145,6 +174,18 @@ public sealed class LoginHttpServer : IDisposable
                     string html = BuildHtmlPage();
                     await SendResponseAsync(stream, 200, "OK", "text/html; charset=utf-8", html, ct).ConfigureAwait(false);
                 }
+                else if (path == "/status")
+                {
+                    string statusJson;
+                    lock (_lock)
+                    {
+                        bool isReady = _qrBytes != null && _qrBytes.Length > 0;
+                        string safeStatus = _currentStatus.Replace("\"", "\\\"");
+                        string safeNick = _userNick.Replace("\"", "\\\"");
+                        statusJson = $"{{\"ready\":{(isReady ? "true" : "false")},\"success\":{(_isSuccess ? "true" : "false")},\"status\":\"{safeStatus}\",\"nick\":\"{safeNick}\"}}";
+                    }
+                    await SendResponseAsync(stream, 200, "OK", "application/json; charset=utf-8", statusJson, ct).ConfigureAwait(false);
+                }
                 else if (path == "/qr.png")
                 {
                     byte[]? imageBytes;
@@ -181,6 +222,7 @@ public sealed class LoginHttpServer : IDisposable
                          $"Content-Type: {contentType}\r\n" +
                          $"Content-Length: {body.Length}\r\n" +
                          $"Connection: close\r\n" +
+                         $"Access-Control-Allow-Origin: *\r\n" +
                          $"Cache-Control: no-cache, no-store, must-revalidate\r\n\r\n";
 
         byte[] headerBytes = Encoding.ASCII.GetBytes(headers);
@@ -195,6 +237,7 @@ public sealed class LoginHttpServer : IDisposable
                          $"Content-Type: {contentType}\r\n" +
                          $"Content-Length: {body.Length}\r\n" +
                          $"Connection: close\r\n" +
+                         $"Access-Control-Allow-Origin: *\r\n" +
                          $"Cache-Control: no-cache, no-store, must-revalidate\r\n\r\n";
 
         byte[] headerBytes = Encoding.ASCII.GetBytes(headers);
@@ -211,11 +254,11 @@ public sealed class LoginHttpServer : IDisposable
             <head>
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>QQ音乐终端版 - 扫码登录</title>
+              <title>QQ音乐终端版 - 网页协同扫码登录</title>
               <style>
                 * { box-sizing: border-box; margin: 0; padding: 0; }
                 body {
-                  background-color: #121212;
+                  background-color: #0f1412;
                   color: #e0e0e0;
                   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
                   min-height: 100vh;
@@ -225,19 +268,19 @@ public sealed class LoginHttpServer : IDisposable
                   padding: 20px;
                 }
                 .card {
-                  background-color: #1e1e1e;
-                  border: 1px solid #2d3732;
-                  border-radius: 16px;
-                  padding: 32px 28px;
-                  max-width: 360px;
+                  background: linear-gradient(145deg, #18221d, #141c18);
+                  border: 1px solid rgba(49, 194, 124, 0.25);
+                  border-radius: 20px;
+                  padding: 36px 32px;
+                  max-width: 380px;
                   width: 100%;
                   text-align: center;
-                  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+                  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 24px rgba(49, 194, 124, 0.1);
                 }
                 .logo-title {
                   color: #31c27c;
-                  font-size: 20px;
-                  font-weight: 700;
+                  font-size: 22px;
+                  font-weight: 800;
                   letter-spacing: 1px;
                   margin-bottom: 6px;
                 }
@@ -246,43 +289,122 @@ public sealed class LoginHttpServer : IDisposable
                   font-size: 13px;
                   margin-bottom: 24px;
                 }
-                .qr-wrapper {
+                .qr-container {
+                  position: relative;
+                  width: 230px;
+                  height: 230px;
+                  margin: 0 auto 24px auto;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
                   background-color: #ffffff;
-                  border-radius: 12px;
-                  padding: 14px;
-                  display: inline-block;
-                  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-                  margin-bottom: 22px;
+                  border-radius: 16px;
+                  padding: 12px;
+                  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
                 }
                 .qr-image {
-                  width: 210px;
-                  height: 210px;
-                  display: block;
+                  width: 100%;
+                  height: 100%;
+                  display: none;
                   image-rendering: pixelated;
                 }
-                .instruction {
+                .qr-loading {
+                  color: #666;
                   font-size: 14px;
-                  font-weight: 500;
+                  display: flex;
+                  flex-direction: column;
+                  align-items: center;
+                  gap: 10px;
+                }
+                .spinner {
+                  width: 32px;
+                  height: 32px;
+                  border: 3px solid rgba(49, 194, 124, 0.2);
+                  border-top-color: #31c27c;
+                  border-radius: 50%;
+                  animation: spin 1s linear infinite;
+                }
+                @keyframes spin {
+                  to { transform: rotate(360deg); }
+                }
+                .instruction {
+                  font-size: 15px;
+                  font-weight: 600;
                   color: #f0f0f0;
                   margin-bottom: 8px;
+                  min-height: 22px;
                 }
                 .hint {
                   font-size: 12px;
                   color: #728078;
-                  line-height: 1.5;
+                  line-height: 1.6;
+                }
+                .success-badge {
+                  display: none;
+                  background-color: rgba(49, 194, 124, 0.15);
+                  border: 1px solid #31c27c;
+                  color: #31c27c;
+                  padding: 10px 16px;
+                  border-radius: 12px;
+                  font-weight: 600;
+                  margin-top: 12px;
                 }
               </style>
             </head>
             <body>
               <div class="card">
                 <div class="logo-title">QQ音乐 终端版</div>
-                <div class="sub-title">网页协同扫码登录</div>
-                <div class="qr-wrapper">
-                  <img class="qr-image" src="/qr.png" alt="登录二维码" />
+                <div class="sub-title">网页协同扫码登录 (0.0.0.0 跨端直连)</div>
+                <div class="qr-container">
+                  <div class="qr-loading" id="qrLoading">
+                    <div class="spinner"></div>
+                    <span>正在获取二维码...</span>
+                  </div>
+                  <img class="qr-image" id="qrImage" src="/qr.png" alt="登录二维码" />
                 </div>
-                <div class="instruction">请使用手机 QQ 扫描二维码登录</div>
-                <div class="hint">当前终端未检测到图像协议，已为您自动启动网页扫码协同。<br>登录成功或关闭终端窗口后，此服务将自动退出。</div>
+                <div class="instruction" id="instruction">请使用手机 QQ 扫描二维码</div>
+                <div class="hint">手机扫码并授权后，终端与网页将自动同步完成登录。<br>登录成功后，此服务将自动退出并释放端口。</div>
+                <div class="success-badge" id="successBadge">🎉 登录成功，正在同步会话...</div>
               </div>
+              <script>
+                const qrImage = document.getElementById('qrImage');
+                const qrLoading = document.getElementById('qrLoading');
+                const instruction = document.getElementById('instruction');
+                const successBadge = document.getElementById('successBadge');
+                let qrLoaded = false;
+
+                async function pollStatus() {
+                  try {
+                    const res = await fetch('/status');
+                    if (!res.ok) return;
+                    const data = await res.json();
+
+                    if (data.ready && !qrLoaded) {
+                      qrImage.src = '/qr.png?t=' + Date.now();
+                      qrImage.onload = () => {
+                        qrLoading.style.display = 'none';
+                        qrImage.style.display = 'block';
+                        qrLoaded = true;
+                      };
+                    }
+
+                    if (data.status) {
+                      instruction.innerText = data.status;
+                    }
+
+                    if (data.success) {
+                      successBadge.innerText = '🎉 登录成功 [' + (data.nick || 'QQ用户') + ']，终端已同步！';
+                      successBadge.style.display = 'block';
+                      instruction.style.color = '#31c27c';
+                      return;
+                    }
+                  } catch (e) {}
+
+                  setTimeout(pollStatus, 1500);
+                }
+
+                pollStatus();
+              </script>
             </body>
             </html>
             """;
