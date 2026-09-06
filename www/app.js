@@ -131,6 +131,11 @@ class ElectronMusicPlayer {
     });
 
     this.albumCover.addEventListener('error', () => {
+      // 若 CDN 封面失败且尚未尝试本地端点，优雅回退至本地提取接口
+      if (this.albumCover.src && !this.albumCover.src.includes('/cover')) {
+        this.albumCover.src = `/cover?mid=${encodeURIComponent(this.state.currentSong?.mid || '')}&t=${Date.now()}`;
+        return;
+      }
       this.stageView.classList.add('no-cover');
       this.albumCover.classList.add('error');
       document.documentElement.style.setProperty('--play-monet-bg', '#1a1c22');
@@ -538,11 +543,15 @@ class ElectronMusicPlayer {
       this.state.totalDuration = song.duration;
     }
 
-    // 重新拉取封面图
+    // 优先直连官方 CDN 高清大图 (800x800 带缓存)，本地音乐或无 albumMid 回退本地提取端点
     if (midChanged || !this.albumCover.src || this.albumCover.src.endsWith('/cover')) {
       this.stageView.classList.remove('no-cover');
       this.albumCover.classList.remove('error');
-      this.albumCover.src = `/cover?mid=${encodeURIComponent(song.mid || '')}&t=${Date.now()}`;
+      if (!song.isLocal && song.albumMid) {
+        this.albumCover.src = `https://y.qq.com/music/photo_new/T002R800x800M000${encodeURIComponent(song.albumMid)}.jpg?max_age=2592000`;
+      } else {
+        this.albumCover.src = `/cover?mid=${encodeURIComponent(song.mid || '')}&t=${Date.now()}`;
+      }
     }
 
     this.updateProgressUI();

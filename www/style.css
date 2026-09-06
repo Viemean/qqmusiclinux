@@ -691,7 +691,7 @@ body {
 
   .left-pane {
     width: 100%;
-    max-width: 320px;
+    max-width: 380px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -701,12 +701,12 @@ body {
     min-height: 0;
   }
 
-  /* 移动端封面尺寸 */
+  /* 移动端封面尺寸 (提升为饱满大封面) */
   .stage-view-wrapper {
-    width: min(66vw, 36vh, 260px);
-    height: min(66vw, 36vh, 260px);
-    max-width: 260px;
-    max-height: 260px;
+    width: min(84vw, 44vh, 340px);
+    height: min(84vw, 44vh, 340px);
+    max-width: 340px;
+    max-height: 340px;
     aspect-ratio: 1 / 1;
     margin: 0 auto;
     cursor: pointer;
@@ -729,7 +729,7 @@ body {
 
   .track-meta {
     width: 100%;
-    max-width: min(66vw, 36vh, 260px);
+    max-width: min(84vw, 44vh, 340px);
     margin-top: 14px;
     text-align: left;
     cursor: pointer;

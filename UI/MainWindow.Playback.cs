@@ -14,6 +14,10 @@ namespace QQMusic.Tui.UI;
 
 public sealed partial class MainWindow
 {
+    private record PrefetchedPlayInfo(string Url, string Quality, AudioQualityTier ActualTier, DateTimeOffset ExpireAt);
+    private static readonly Dictionary<string, PrefetchedPlayInfo> s_prefetchedPlayUrls = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object s_prefetchLock = new();
+
     private Task PlaySongAsync(Song song) => PlaySongAsync(song, 0);
 
     private async Task PlaySongAsync(Song song, double startPosition = 0)
@@ -104,7 +108,32 @@ public sealed partial class MainWindow
             }
             else
             {
-                var (url, quality, actualTier) = await QqMusicApi.GetPlayUrlForTierAsync(song.Mid, song.EffectiveMediaMid, _preferredQualityTier);
+                var cacheKey = $"{song.Mid}_{(int)_preferredQualityTier}";
+                PrefetchedPlayInfo? prefetched = null;
+                lock (s_prefetchLock)
+                {
+                    if (s_prefetchedPlayUrls.Remove(cacheKey, out var p) && p.ExpireAt > DateTimeOffset.UtcNow)
+                    {
+                        prefetched = p;
+                    }
+                }
+
+                string? url;
+                string? quality;
+                AudioQualityTier actualTier;
+
+                if (prefetched != null)
+                {
+                    url = prefetched.Url;
+                    quality = prefetched.Quality;
+                    actualTier = prefetched.ActualTier;
+                    AppLogger.Info("MainWindow", $"Prefetch cache hit for {song.Title} ({actualTier})");
+                }
+                else
+                {
+                    (url, quality, actualTier) = await QqMusicApi.GetPlayUrlForTierAsync(song.Mid, song.EffectiveMediaMid, _preferredQualityTier);
+                }
+
                 playUrl = url;
                 _actualQualityTier = actualTier;
                 if (!string.IsNullOrEmpty(quality))
@@ -210,6 +239,9 @@ public sealed partial class MainWindow
         }
 
         Application.Invoke(RefreshLyricListView);
+
+        // 启动后台平滑预热下一首曲目的音源与封面
+        _ = Task.Run(PrefetchNextSongAsync);
     }
 
     private void ToggleTranslation()
@@ -681,6 +713,83 @@ public sealed partial class MainWindow
                 _standaloneWebServer.ActualQualityTier = _preferredQualityTier;
                 _standaloneWebServer.BroadcastState("quality_change");
             }
+        }
+    }
+
+    private async Task PrefetchNextSongAsync()
+    {
+        try
+        {
+            // 延迟 2.5 秒，避免与当前歌曲的音源解码、歌词拉取争抢网络
+            await Task.Delay(2500).ConfigureAwait(false);
+
+            Song? nextSong = null;
+            if (_currentViewMode == ViewMode.GuessRecommend)
+            {
+                if (_radioIndex + 1 < _radioQueue.Count)
+                {
+                    nextSong = _radioQueue[_radioIndex + 1];
+                }
+            }
+            else if (_songListView.Songs.Count > 1)
+            {
+                var songs = _songListView.Songs;
+                if (_currentPlaybackMode == PlaybackMode.Shuffle)
+                {
+                    if (_shufflePointer >= 0 && _shufflePointer + 1 < _shuffleIndices.Count)
+                    {
+                        int nextIdx = _shuffleIndices[_shufflePointer + 1];
+                        if (nextIdx >= 0 && nextIdx < songs.Count) nextSong = songs[nextIdx];
+                    }
+                }
+                else
+                {
+                    int curIdx = -1;
+                    for (int i = 0; i < songs.Count; i++)
+                    {
+                        if (songs[i].Mid == _activeSong?.Mid) { curIdx = i; break; }
+                    }
+                    if (curIdx >= 0)
+                    {
+                        int nextIdx = (curIdx + 1) % songs.Count;
+                        nextSong = songs[nextIdx];
+                    }
+                }
+            }
+
+            if (nextSong != null && !nextSong.IsLocal && !string.IsNullOrEmpty(nextSong.Mid))
+            {
+                // 1. 如果本地已有音频缓存，无需网络预热
+                var cached = AudioCacheService.GetCachedAudioPath(nextSong.Mid, _preferredQualityTier);
+                if (!string.IsNullOrEmpty(cached)) return;
+
+                // 2. 预热本地封面
+                _ = TerminalImageHelper.EnsureSongCoverAsync(nextSong);
+
+                // 3. 预解析下一首音源链接并缓存
+                var cacheKey = $"{nextSong.Mid}_{(int)_preferredQualityTier}";
+                lock (s_prefetchLock)
+                {
+                    if (s_prefetchedPlayUrls.TryGetValue(cacheKey, out var item) && item.ExpireAt > DateTimeOffset.UtcNow)
+                    {
+                        return;
+                    }
+                }
+
+                var (url, quality, actualTier) = await QqMusicApi.GetPlayUrlForTierAsync(nextSong.Mid, nextSong.EffectiveMediaMid, _preferredQualityTier).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(url))
+                {
+                    lock (s_prefetchLock)
+                    {
+                        s_prefetchedPlayUrls[cacheKey] = new PrefetchedPlayInfo(url, quality, actualTier, DateTimeOffset.UtcNow.AddMinutes(20));
+                    }
+                    AppLogger.Info("MainWindow", $"Prefetched next track audio URL successfully: {nextSong.Title} ({actualTier})");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Debug("MainWindow", $"PrefetchNextSongAsync exception: {ex.Message}");
         }
     }
 }
