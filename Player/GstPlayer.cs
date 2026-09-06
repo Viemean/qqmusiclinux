@@ -18,6 +18,7 @@ public sealed partial class GstPlayer : IPlayer
     private nint _pipeline;
     private readonly Lock _lock = new();
     private bool _disposed;
+    private bool _playbackFinishedTriggered;
 
     public bool IsAvailable => _pipeline != 0;
     public bool IsPlaying { get; private set; }
@@ -75,6 +76,7 @@ public sealed partial class GstPlayer : IPlayer
             TotalDurationSeconds = duration;
             CurrentPositionSeconds = startPosition;
             IsPlaying = true;
+            _playbackFinishedTriggered = false;
 
             // 停掉前一段播放
             gst_element_set_state(_pipeline, GST_STATE_NULL);
@@ -146,6 +148,7 @@ public sealed partial class GstPlayer : IPlayer
             gst_element_set_state(_pipeline, GST_STATE_NULL);
             IsPlaying = false;
             CurrentPositionSeconds = 0;
+            _playbackFinishedTriggered = false;
             AppLogger.Info("GstPlayer", "Playback stopped");
         }
 
@@ -159,6 +162,10 @@ public sealed partial class GstPlayer : IPlayer
             if (_disposed || _pipeline == 0) return Task.CompletedTask;
 
             CurrentPositionSeconds = Math.Clamp(seconds, 0, TotalDurationSeconds > 0 ? TotalDurationSeconds : 3600);
+            if (TotalDurationSeconds > 0 && CurrentPositionSeconds < TotalDurationSeconds - 1.0)
+            {
+                _playbackFinishedTriggered = false;
+            }
             var seekNs = (long)(CurrentPositionSeconds * 1_000_000_000.0);
             var ok = gst_element_seek_simple(_pipeline, GST_FORMAT_TIME, GST_SEEK_FLAGS, seekNs);
             AppLogger.Info("GstPlayer", $"Seek to {CurrentPositionSeconds:F1}s result: {ok}");
@@ -207,7 +214,20 @@ public sealed partial class GstPlayer : IPlayer
 
                     if (TotalDurationSeconds > 0 && sec >= TotalDurationSeconds - 0.5)
                     {
-                        PlaybackFinished?.Invoke();
+                        bool shouldTrigger = false;
+                        lock (_lock)
+                        {
+                            if (!_playbackFinishedTriggered)
+                            {
+                                _playbackFinishedTriggered = true;
+                                shouldTrigger = true;
+                            }
+                        }
+
+                        if (shouldTrigger)
+                        {
+                            PlaybackFinished?.Invoke();
+                        }
                     }
                 }
             }

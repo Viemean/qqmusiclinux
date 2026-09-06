@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Text;
 using Rectangle = System.Drawing.Rectangle;
 using Terminal.Gui.Drawing;
+using Terminal.Gui.Text;
 using QQMusic.Tui.Models;
 
 namespace QQMusic.Tui.UI;
@@ -28,7 +29,11 @@ public sealed partial class SongListView
         }
 
         string loopText = _currentFullTitle + "        ";
-        _marqueeOffset = (_marqueeOffset + 1) % loopText.Length;
+        int runeCount = loopText.GetRuneCount();
+        if (runeCount > 0)
+        {
+            _marqueeOffset = (_marqueeOffset + 1) % runeCount;
+        }
         var slice = GetMarqueeSlice(loopText, _marqueeOffset, maxW);
         if (_lastDispatchedTitle != slice)
         {
@@ -251,20 +256,17 @@ public sealed partial class SongListView
         return $"{(index + 1):D2}  {titleCol}  {artistCol}  {albumCol}";
     }
 
-    private static int GetDisplayWidth(string text)
+    public static int GetDisplayWidth(string text)
     {
         if (string.IsNullOrEmpty(text)) return 0;
-        int w = 0;
-        foreach (var ch in text)
-        {
-            w += ch > 127 ? 2 : 1;
-        }
-        return w;
+        return text.GetColumns();
     }
 
     private static string GetMarqueeSlice(string loopText, int offset, int targetWidth)
     {
-        int totalLen = loopText.Length;
+        if (string.IsNullOrEmpty(loopText)) return "";
+        var runes = loopText.ToRunes();
+        int totalLen = runes.Length;
         if (totalLen == 0) return "";
         offset %= totalLen;
 
@@ -272,14 +274,14 @@ public sealed partial class SongListView
         int curW = 0;
         for (int i = 0; i < totalLen * 2; i++)
         {
-            char ch = loopText[(offset + i) % totalLen];
-            int chW = ch > 127 ? 2 : 1;
-            if (curW + chW > targetWidth)
+            var rune = runes[(offset + i) % totalLen];
+            int runeW = rune.GetColumns();
+            if (curW + runeW > targetWidth)
             {
                 break;
             }
-            sb.Append(ch);
-            curW += chW;
+            sb.Append(rune);
+            curW += runeW;
         }
 
         if (curW < targetWidth)
@@ -311,15 +313,15 @@ public sealed partial class SongListView
         int currentW = 0;
         var sb = new StringBuilder(targetWidth);
 
-        foreach (var ch in text)
+        foreach (var rune in text.EnumerateRunes())
         {
-            int chW = ch > 127 ? 2 : 1;
-            if (currentW + chW > limit)
+            int runeW = rune.GetColumns();
+            if (currentW + runeW > limit)
             {
                 break;
             }
-            sb.Append(ch);
-            currentW += chW;
+            sb.Append(rune);
+            currentW += runeW;
         }
 
         sb.Append("..");
