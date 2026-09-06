@@ -79,7 +79,14 @@ if command -v abuild-tar >/dev/null 2>&1; then
     tar -C "$STAGE_DIR" -c usr | abuild-tar --hash | gzip -9 > "$WORK_DIR/data.tar.gz"
     tar -C "$CONTROL_DIR" -c .PKGINFO | abuild-tar --cut | gzip -9 > "$WORK_DIR/control.tar.gz"
 
-    KEY_FILE=$(ls /root/.abuild/*.rsa ~/.abuild/*.rsa 2>/dev/null | head -n 1 || true)
+    KEY_FILE=""
+    for k in /root/.abuild/*.rsa ~/.abuild/*.rsa; do
+        if [ -f "$k" ]; then
+            KEY_FILE="$k"
+            break
+        fi
+    done
+
     if [ -n "$KEY_FILE" ] && command -v abuild-sign >/dev/null 2>&1; then
         echo "==> Signing package with $KEY_FILE..."
         abuild-sign -k "$KEY_FILE" "$WORK_DIR/control.tar.gz"

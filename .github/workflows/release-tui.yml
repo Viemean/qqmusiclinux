@@ -90,7 +90,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             mcr.microsoft.com/dotnet/sdk:10.0-alpine \
-            sh -c "apk update && apk add --no-cache bash alpine-sdk clang lld gstreamer-dev gst-plugins-base-dev && ./build-apk.sh $VERSION 1 aarch64 linux-musl-arm64"
+            sh -c "apk update && apk add --no-cache bash alpine-sdk clang lld gstreamer-dev gst-plugins-base-dev && mkdir -p /root/.abuild && abuild-keygen -a -i -n && ./build-apk.sh $VERSION 1 aarch64 linux-musl-arm64"
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
