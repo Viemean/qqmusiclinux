@@ -1130,6 +1130,13 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
+            if (c == 'U')
+            {
+                k.Handled = true;
+                ShowLoginDialog();
+                return;
+            }
+
             if (c == 'J')
             {
                 k.Handled = true;
@@ -1298,7 +1305,7 @@ public sealed partial class MainWindow : Window
             var vipSuffix = UserSession.Current.IsVip ? " [VIP]" : "";
             return $"账号: {name}{vipSuffix}";
         }
-        return "未登录 (按 L 登录)";
+        return "未登录 (按 U 登录)";
     }
 
     /// <summary>

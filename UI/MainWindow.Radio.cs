@@ -23,8 +23,8 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _songListView.SetMessage("请按 L 键登录后体验“猜你喜欢”个性化音乐电台", "猜你喜欢 (未登录)");
-                _controlBar.UpdateStatus("[猜你喜欢] 请先按 L 登录账号以获取个性化推荐");
+                _songListView.SetMessage("请按 U 键登录后体验“猜你喜欢”个性化音乐电台", "猜你喜欢 (未登录)");
+                _controlBar.UpdateStatus("[猜你喜欢] 请先按 U 登录账号以获取个性化推荐");
             });
             return;
         }
@@ -60,8 +60,8 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _songListView.SetMessage("请按 L 键登录后体验“猜你喜欢”个性化音乐电台", "猜你喜欢 (未登录)");
-                _controlBar.UpdateStatus("[猜你喜欢] 请先按 L 登录账号以获取个性化推荐");
+                _songListView.SetMessage("请按 U 键登录后体验“猜你喜欢”个性化音乐电台", "猜你喜欢 (未登录)");
+                _controlBar.UpdateStatus("[猜你喜欢] 请先按 U 登录账号以获取个性化推荐");
             });
             return;
         }
@@ -81,7 +81,7 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _songListView.SetMessage("未能获取到电台推荐歌曲，请按 L 检查登录状态或按 R 重试", "猜你喜欢: 0 首");
+                _songListView.SetMessage("未能获取到电台推荐歌曲，请按 U 检查登录状态或按 R 重试", "猜你喜欢: 0 首");
                 _controlBar.UpdateStatus("[电台提示] 未能获取到推荐曲目，可按 R 重新连接");
             });
             return;

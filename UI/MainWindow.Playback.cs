@@ -203,7 +203,7 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _controlBar.UpdateStatus($"[VIP限制] {song.Title} - {song.Artist} (VIP 独占曲目，可按 L 导入网页端 VIP Cookie)");
+                _controlBar.UpdateStatus($"[VIP限制] {song.Title} - {song.Artist} (VIP 独占曲目，请按 U 登录 VIP 账号)");
                 _controlBar.UpdateQuality(AudioQualityHelper.GetBadge(_actualQualityTier));
                 _nowPlayingView.SetSong(song, AudioQualityHelper.GetBadge(_actualQualityTier));
             });

@@ -11,7 +11,7 @@ using QQMusic.Tui.Services;
 
 namespace QQMusic.Tui.UI;
 
-public sealed class LoginDialog : Dialog
+public sealed class LoginDialog : Window
 {
     private readonly Action _onLoginSuccess;
     private readonly CancellationTokenSource _cts = new();
@@ -29,11 +29,6 @@ public sealed class LoginDialog : Dialog
     private readonly Label _qrStatusLabel;
     private readonly Label _qrTipLabel;
     private readonly ListView _qrView;
-
-    // 3. Cookie 导入容器
-    private readonly View _cookieContainer;
-    private readonly TextField _cookieInput;
-    private readonly Label _cookieStatusLabel;
 
     public LoginDialog(Action onLoginSuccess)
     {
@@ -59,17 +54,10 @@ public sealed class LoginDialog : Dialog
             Y = 0
         };
 
-        var cookieTabBtn = new Button
-        {
-            Text = "Cookie 导入",
-            X = Pos.Right(qrTabBtn) + 2,
-            Y = 0
-        };
-
         var logoutBtn = new Button
         {
             Text = "退出账号",
-            X = Pos.Right(cookieTabBtn) + 2,
+            X = Pos.Right(qrTabBtn) + 2,
             Y = 0
         };
 
@@ -80,7 +68,7 @@ public sealed class LoginDialog : Dialog
             Y = 0
         };
 
-        Add(webTabBtn, qrTabBtn, cookieTabBtn, logoutBtn, closeBtn);
+        Add(webTabBtn, qrTabBtn, logoutBtn, closeBtn);
 
         // ==================== 1. 网页登录容器 (默认激活) ====================
         _webContainer = new View
@@ -196,72 +184,17 @@ public sealed class LoginDialog : Dialog
 
         Add(_qrContainer);
 
-        // ==================== 3. Cookie 导入容器 ====================
-        _cookieContainer = new View
-        {
-            X = 0,
-            Y = 2,
-            Width = Dim.Fill(),
-            Height = Dim.Fill(),
-            Visible = false
-        };
-
-        var cookieDesc = new Label
-        {
-            Text = "请在下方粘贴网页版或客户端提取的 Cookie 字符串:\n(包含 uin 与 skey 或 qm_keyst)",
-            X = 2,
-            Y = 1
-        };
-        _cookieContainer.Add(cookieDesc);
-
-        _cookieInput = new TextField
-        {
-            X = 2,
-            Y = 5,
-            Width = Dim.Fill(2),
-            Text = ""
-        };
-        _cookieContainer.Add(_cookieInput);
-
-        var saveCookieBtn = new Button
-        {
-            Text = "保存并应用",
-            X = 2,
-            Y = 8
-        };
-        _cookieContainer.Add(saveCookieBtn);
-
-        _cookieStatusLabel = new Label
-        {
-            Text = "",
-            X = 2,
-            Y = 10
-        };
-        _cookieContainer.Add(_cookieStatusLabel);
-
-        Add(_cookieContainer);
-
         // ==================== 事件交互处理 ====================
         webTabBtn.Accepting += (s, e) =>
         {
             _webContainer.Visible = true;
             _qrContainer.Visible = false;
-            _cookieContainer.Visible = false;
         };
 
         qrTabBtn.Accepting += (s, e) =>
         {
             _webContainer.Visible = false;
             _qrContainer.Visible = true;
-            _cookieContainer.Visible = false;
-        };
-
-        cookieTabBtn.Accepting += (s, e) =>
-        {
-            _webContainer.Visible = false;
-            _qrContainer.Visible = false;
-            _cookieContainer.Visible = true;
-            _cookieInput.SetFocus();
         };
 
         logoutBtn.Accepting += (s, e) =>
@@ -275,29 +208,16 @@ public sealed class LoginDialog : Dialog
 
         closeBtn.Accepting += (s, e) => CloseSelf();
 
-        saveCookieBtn.Accepting += (s, e) =>
-        {
-            var raw = _cookieInput.Text.ToString()?.Trim() ?? "";
-            if (LoginService.ImportCookieString(raw))
-            {
-                _cookieStatusLabel.Text = $"导入成功: 已绑定账号 {UserSession.Current.Uin}";
-                _onLoginSuccess?.Invoke();
-                Task.Delay(1000).ContinueWith(_ => Application.Invoke(CloseSelf));
-            }
-            else
-            {
-                _cookieStatusLabel.Text = "错误: 未在 Cookie 中识别到有效的 uin 或凭证字段";
-            }
-        };
-
         KeyDown += (s, k) =>
         {
             if (k == Key.Esc)
             {
+                k.Handled = true;
                 CloseSelf();
             }
             else if ((k.AsRune.Value == 'b' || k.AsRune.Value == 'B') && _httpServer != null && _httpServer.IsRunning)
             {
+                k.Handled = true;
                 TryOpenBrowser(_httpServer.LocalUrl);
             }
         };
@@ -446,7 +366,7 @@ public sealed class LoginDialog : Dialog
         {
         }
 
-        Application.RequestStop();
+        Application.RequestStop(this);
     }
 
     protected override void Dispose(bool disposing)

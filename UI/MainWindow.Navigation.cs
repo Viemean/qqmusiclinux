@@ -119,7 +119,7 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _songListView.SetMessage("请按 L 键登录后获取您的每日 30 首个性化推荐歌单", "每日30首 (未登录)");
+                _songListView.SetMessage("请按 U 键登录后获取您的每日 30 首个性化推荐歌单", "每日30首 (未登录)");
             });
             return;
         }
@@ -133,7 +133,7 @@ public sealed partial class MainWindow
         {
             if (songs.Count == 0)
             {
-                _songListView.SetMessage("今日推荐歌单获取为空，请按 L 检查登录状态或稍后重试", "每日30首: 0 首");
+                _songListView.SetMessage("今日推荐歌单获取为空，请按 U 检查登录状态或稍后重试", "每日30首: 0 首");
                 _controlBar.UpdateStatus("[加载提示] 未能获取到今日推荐歌单数据");
                 return;
             }
@@ -191,7 +191,7 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _songListView.SetMessage("请按 L 键登录后同步您的云端歌单列表", "我的歌单 (未登录)");
+                _songListView.SetMessage("请按 U 键登录后同步您的云端歌单列表", "我的歌单 (未登录)");
             });
             return;
         }
@@ -331,7 +331,7 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _songListView.SetMessage("请按 L 键登录后同步您的云端收藏专辑", "收藏专辑 (未登录)");
+                _songListView.SetMessage("请按 U 键登录后同步您的云端收藏专辑", "收藏专辑 (未登录)");
             });
             return;
         }

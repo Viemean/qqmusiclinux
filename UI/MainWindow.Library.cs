@@ -23,7 +23,7 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _songListView.SetMessage("请按 L 键登录后同步您的“我的喜欢”收藏歌单", "我的喜欢 (未登录)");
+                _songListView.SetMessage("请按 U 键登录后同步您的“我的喜欢”收藏歌单", "我的喜欢 (未登录)");
             });
             return;
         }
@@ -149,7 +149,7 @@ public sealed partial class MainWindow
 
         if (!UserSession.Current.IsLoggedIn)
         {
-            _controlBar.UpdateStatus("[未登录] 请按 L 登录后再进行收藏操作");
+            _controlBar.UpdateStatus("[未登录] 请按 U 登录后再进行收藏操作");
             return;
         }
 
@@ -300,7 +300,7 @@ public sealed partial class MainWindow
 
         if (!UserSession.Current.IsLoggedIn)
         {
-            _controlBar.UpdateStatus("[未登录] 请按 L 登录后操作");
+            _controlBar.UpdateStatus("[未登录] 请按 U 登录后操作");
             return;
         }
 
@@ -382,7 +382,7 @@ public sealed partial class MainWindow
 
         if (!UserSession.Current.IsLoggedIn)
         {
-            _controlBar.UpdateStatus("[未登录] 请按 L 登录后再添加至歌单");
+            _controlBar.UpdateStatus("[未登录] 请按 U 登录后再添加至歌单");
             return;
         }
 
@@ -426,7 +426,7 @@ public sealed partial class MainWindow
     {
         if (!UserSession.Current.IsLoggedIn)
         {
-            _controlBar.UpdateStatus("[未登录] 请按 L 登录后操作");
+            _controlBar.UpdateStatus("[未登录] 请按 U 登录后操作");
             return;
         }
 

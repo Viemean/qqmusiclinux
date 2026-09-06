@@ -234,7 +234,7 @@ public sealed class AudioRecognitionDialog : Dialog
         if (_isDismissed) return;
         _isDismissed = true;
         StopAllProcesses();
-        Application.RequestStop();
+        Application.RequestStop(this);
     }
 
     private void HandleActionTriggered()
@@ -251,7 +251,7 @@ public sealed class AudioRecognitionDialog : Dialog
             {
                 _onSongSelected?.Invoke(songToPlay);
             }
-            Application.RequestStop();
+            Application.RequestStop(this);
             return;
         }
 
@@ -549,13 +549,13 @@ public sealed class AudioRecognitionDialog : Dialog
             config.AccessKey = keyField.Text?.Trim() ?? "";
             config.AccessSecret = secretField.Text?.Trim() ?? "";
             config.Save();
-            Application.RequestStop();
+            Application.RequestStop(dlg);
             StartRecognitionProcess();
         };
 
         cancelBtn.Accepting += (s, e) =>
         {
-            Application.RequestStop();
+            Application.RequestStop(dlg);
             StartRecognitionProcess();
         };
 

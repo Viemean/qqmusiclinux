@@ -87,14 +87,15 @@ public sealed class AddToPlaylistDialog : Dialog
             Y = 11
         };
         cancelBtn.KeyBindings.Remove(Key.Space);
-        cancelBtn.Accepting += (s, e) => Application.RequestStop();
+        cancelBtn.Accepting += (s, e) => Application.RequestStop(this);
         Add(cancelBtn);
 
         KeyDown += (s, k) =>
         {
             if (k == Key.Esc || k == Key.Q)
             {
-                Application.RequestStop();
+                k.Handled = true;
+                Application.RequestStop(this);
             }
         };
 
@@ -106,7 +107,7 @@ public sealed class AddToPlaylistDialog : Dialog
         var idx = _playlistListView.SelectedItem ?? -1;
         if (idx >= 0 && idx < _writablePlaylists.Count)
         {
-            Application.RequestStop();
+            Application.RequestStop(this);
             _onSelected.Invoke(_writablePlaylists[idx]);
         }
     }

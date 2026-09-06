@@ -238,7 +238,7 @@ public sealed partial class MainWindow
         yesBtn.Accepting += (s, e) =>
         {
             confirmed = true;
-            Application.RequestStop();
+            Application.RequestStop(dlg);
         };
 
         var noBtn = new Button
@@ -251,7 +251,7 @@ public sealed partial class MainWindow
         noBtn.SetScheme(TransparentDialogScheme);
         noBtn.Accepting += (s, e) =>
         {
-            Application.RequestStop();
+            Application.RequestStop(dlg);
         };
 
         dlg.Add(yesBtn, noBtn);
@@ -263,13 +263,13 @@ public sealed partial class MainWindow
             {
                 k.Handled = true;
                 confirmed = true;
-                Application.RequestStop();
+                Application.RequestStop(dlg);
             }
             else if (k == Key.N || k.AsRune.Value == 'n' || k.AsRune.Value == 'N' ||
                      k == Key.Esc || k.AsRune.Value == 'q' || k.AsRune.Value == 'Q')
             {
                 k.Handled = true;
-                Application.RequestStop();
+                Application.RequestStop(dlg);
             }
         };
 
@@ -450,7 +450,7 @@ public sealed partial class MainWindow
                 });
             }
             catch {}
-            Application.RequestStop();
+            Application.RequestStop(dlg);
         }
 
         openBtn.Accepting += (s, e) => DoOpenBrowser();
@@ -476,7 +476,7 @@ public sealed partial class MainWindow
                 return;
             }
             StopStandaloneWebServer();
-            Application.RequestStop();
+            Application.RequestStop(dlg);
         }
 
         stopBtn.Accepting += (s, e) => DoStopServer();
@@ -489,7 +489,7 @@ public sealed partial class MainWindow
             ShadowStyle = ShadowStyles.None
         };
         closeBtn.SetScheme(TransparentDialogScheme);
-        closeBtn.Accepting += (s, e) => Application.RequestStop();
+        closeBtn.Accepting += (s, e) => Application.RequestStop(dlg);
 
         dlg.Add(addrLabel, portLabel, portField, portHintLabel, tuiAudioLabel, tuiAudioBtn, openBtn, stopBtn, closeBtn);
 
@@ -513,7 +513,7 @@ public sealed partial class MainWindow
             else if (k == Key.Esc || k.AsRune.Value == 'q' || k.AsRune.Value == 'Q')
             {
                 k.Handled = true;
-                Application.RequestStop();
+                Application.RequestStop(dlg);
             }
         };
 

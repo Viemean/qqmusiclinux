@@ -126,7 +126,7 @@ public sealed class SelectArtistDialog : Dialog
             if (k == Key.Esc || k.AsRune.Value == 'q' || k.AsRune.Value == 'Q')
             {
                 k.Handled = true;
-                Application.RequestStop();
+                Application.RequestStop(this);
             }
             else if (k == Key.Enter || k.AsRune.Value == '\r' || k.AsRune.Value == '\n')
             {
@@ -154,7 +154,7 @@ public sealed class SelectArtistDialog : Dialog
             ShadowStyle = ShadowStyles.None
         };
         cancelBtn.SetScheme(TransparentDialogScheme);
-        cancelBtn.Accepting += (s, e) => Application.RequestStop();
+        cancelBtn.Accepting += (s, e) => Application.RequestStop(this);
 
         Add(_artistListView, confirmBtn, cancelBtn);
         MikuTheme.ApplyTo(this, TransparentDialogScheme);
@@ -169,7 +169,7 @@ public sealed class SelectArtistDialog : Dialog
         if (idx >= 0 && idx < _artists.Count)
         {
             SelectedArtist = _artists[idx];
-            Application.RequestStop();
+            Application.RequestStop(this);
             _onSelected?.Invoke(SelectedArtist);
         }
     }

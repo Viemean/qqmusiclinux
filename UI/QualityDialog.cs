@@ -86,14 +86,15 @@ public sealed class QualityDialog : Dialog
             ShadowStyle = ShadowStyles.None
         };
         cancelBtn.KeyBindings.Remove(Key.Space);
-        cancelBtn.Accepting += (s, e) => Application.RequestStop();
+        cancelBtn.Accepting += (s, e) => Application.RequestStop(this);
         Add(cancelBtn);
 
         KeyDown += (s, k) =>
         {
             if (k == Key.Esc || k == Key.Q)
             {
-                Application.RequestStop();
+                k.Handled = true;
+                Application.RequestStop(this);
             }
         };
 
@@ -157,7 +158,7 @@ public sealed class QualityDialog : Dialog
 
             _currentTier = opt.Tier;
             _onQualitySelected?.Invoke(opt.Tier, opt);
-            Application.RequestStop();
+            Application.RequestStop(this);
         }
     }
 }

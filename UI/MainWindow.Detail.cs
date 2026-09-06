@@ -534,7 +534,7 @@ public sealed partial class MainWindow
     {
         if (!UserSession.Current.IsLoggedIn)
         {
-            _controlBar.UpdateStatus("[未登录] 请按 L 登录后再执行收藏操作");
+            _controlBar.UpdateStatus("[未登录] 请按 U 登录后再执行收藏操作");
             return;
         }
 
