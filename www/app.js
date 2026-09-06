@@ -70,6 +70,7 @@ class ElectronMusicPlayer {
     this.sseReconnectTimer = null;
     this.lastSseMessageTime = Date.now();
     this.sseWatchdogInterval = null;
+    this.pendingAutoplay = false;
 
     this.init();
   }
@@ -222,15 +223,29 @@ class ElectronMusicPlayer {
     // 注册 Android / 系统通知栏标准按钮与状态公布
     this.setupMediaSession();
 
-    // 移动端息屏唤醒与切回前台事件：若长连接断开或超时，立即静默重连
+    // 移动端息屏唤醒与切回前台事件：若长连接断开或超时，立即静默重连，并补偿受限的自动起播
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') {
         const elapsed = Date.now() - this.lastSseMessageTime;
         if (!this.sse || this.sse.readyState === EventSource.CLOSED || elapsed > 25000) {
           this.reconnectSSE();
         }
+        if (this.pendingAutoplay && this.state.isPlaying && this.audioElement.src) {
+          this.audioElement.play().then(() => {
+            this.pendingAutoplay = false;
+          }).catch(() => {});
+        }
       }
     });
+
+    // 用户在页面任意触碰时，若存在被浏览器策略挂起的待播放曲目，立即静默触发起播
+    document.addEventListener('pointerdown', () => {
+      if (this.pendingAutoplay && this.state.isPlaying && this.audioElement.src) {
+        this.audioElement.play().then(() => {
+          this.pendingAutoplay = false;
+        }).catch(() => {});
+      }
+    }, { passive: true });
 
     window.addEventListener('online', () => {
       this.reconnectSSE();
@@ -490,12 +505,11 @@ class ElectronMusicPlayer {
       this.handleTrackChange(data.song);
     }
 
-    // 2. 切歌阶段通知：若新音频流尚未准备好，先重置播放器并停止旧音频
+    // 2. 切歌阶段通知：若新音频流尚未准备好，平滑暂停并重置进度（严禁 removeAttribute('src') 破坏移动端播放会话上下文）
     if (data.type === 'song_change' || (!data.streamUrl && data.type !== 'play')) {
       if (data.type === 'song_change') {
         this.currentStreamUrl = '';
         this.audioElement.pause();
-        this.audioElement.removeAttribute('src');
         this.state.currentPosition = 0;
         this.updateProgressUI();
       }
@@ -514,8 +528,11 @@ class ElectronMusicPlayer {
           this.audioElement.currentTime = data.position;
         }
         if (data.isPlaying) {
-          this.audioElement.play().catch((err) => {
+          this.audioElement.play().then(() => {
+            this.pendingAutoplay = false;
+          }).catch((err) => {
             console.warn('Autoplay waiting for gesture:', err);
+            this.pendingAutoplay = true;
           });
         }
         this.updateMediaSessionPosition();

@@ -232,9 +232,34 @@ public sealed partial class MainWindow
         {
             Application.Invoke(() =>
             {
-                _controlBar.UpdateStatus($"[VIP限制] {song.Title} - {song.Artist} (VIP 独占曲目，请按 U 登录 VIP 账号)");
+                _controlBar.UpdateStatus($"[无法播放] {song.Title} - {song.Artist} (无可用音源或需 VIP，1.5秒后自动跳过)");
                 _controlBar.UpdateQuality(AudioQualityHelper.GetBadge(_actualQualityTier));
                 _nowPlayingView.SetSong(song, AudioQualityHelper.GetBadge(_actualQualityTier));
+            });
+
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+            {
+                _standaloneWebServer.IsPlaying = false;
+                _standaloneWebServer.BroadcastState("pause");
+            }
+
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(1500).ConfigureAwait(false);
+                Application.Invoke(async () =>
+                {
+                    if (_activeSong?.Mid == song.Mid)
+                    {
+                        if (_currentViewMode == ViewMode.GuessRecommend)
+                        {
+                            await PlayNextRadioTrackAsync();
+                        }
+                        else
+                        {
+                            await PlayNextInCurrentListAsync(isAutoPlayback: true);
+                        }
+                    }
+                });
             });
         }
 

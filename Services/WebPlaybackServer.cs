@@ -834,7 +834,7 @@ public sealed class WebPlaybackServer : IDisposable
             </main>
           </div>
           <audio id="audioElement" preload="auto"></audio>
-          <script src="/app.js?v=20260906_3" type="module"></script>
+          <script src="/app.js?v=20260906_4" type="module"></script>
         </body>
         </html>
         """;

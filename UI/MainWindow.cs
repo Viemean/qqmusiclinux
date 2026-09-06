@@ -1466,18 +1466,21 @@ public sealed partial class MainWindow : Window
             };
             _standaloneWebServer.PlaybackEnded += () =>
             {
-                if (_isTuiAudioDisabled)
+                Application.Invoke(async () =>
                 {
-                    Application.Invoke(async () =>
+                    if (_currentViewMode == ViewMode.GuessRecommend)
                     {
-                        if (_currentViewMode == ViewMode.GuessRecommend)
-                            await PlayNextRadioTrackAsync();
-                        else if (_currentPlaybackMode == PlaybackMode.SingleLoop && _activeSong != null)
-                            await PlaySongAsync(_activeSong, 0);
-                        else
-                            await PlayNextInCurrentListAsync();
-                    });
-                }
+                        await PlayNextRadioTrackAsync();
+                    }
+                    else if (_currentPlaybackMode == PlaybackMode.SingleLoop && _activeSong != null)
+                    {
+                        await PlaySongAsync(_activeSong, 0);
+                    }
+                    else
+                    {
+                        await PlayNextInCurrentListAsync(isAutoPlayback: true);
+                    }
+                });
             };
 
             var ok = _standaloneWebServer.Start(_webServerPort, initialAudioOutput: true);
