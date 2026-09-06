@@ -5,6 +5,7 @@ using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using QQMusic.Tui.Api;
 using QQMusic.Tui.Models;
+using QQMusic.Tui.Player;
 using QQMusic.Tui.Services;
 using QQMusic.Tui.Utils;
 
@@ -325,7 +326,7 @@ public sealed partial class MainWindow
         var dlg = new Dialog
         {
             Title = "Web 协同服务配置",
-            Width = 62,
+            Width = 64,
             Height = 11
         };
 
@@ -429,7 +430,7 @@ public sealed partial class MainWindow
         var openBtn = new Button
         {
             Text = "浏览器打开 (B)",
-            X = Pos.Center() - 14,
+            X = Pos.Center() - 19,
             Y = Pos.AnchorEnd(1),
             ShadowStyle = ShadowStyles.None
         };
@@ -454,17 +455,43 @@ public sealed partial class MainWindow
 
         openBtn.Accepting += (s, e) => DoOpenBrowser();
 
+        var stopBtn = new Button
+        {
+            Text = "关闭服务 (S)",
+            X = Pos.Center() - 1,
+            Y = Pos.AnchorEnd(1),
+            ShadowStyle = ShadowStyles.None
+        };
+        stopBtn.SetScheme(TransparentDialogScheme);
+        if (_player is WebPlayer)
+        {
+            stopBtn.Enabled = false;
+        }
+
+        void DoStopServer()
+        {
+            if (_player is WebPlayer)
+            {
+                _controlBar.UpdateStatus("当前运行在 WebPlayer 模式，无法单独关闭服务");
+                return;
+            }
+            StopStandaloneWebServer();
+            Application.RequestStop();
+        }
+
+        stopBtn.Accepting += (s, e) => DoStopServer();
+
         var closeBtn = new Button
         {
-            Text = "关闭 (Esc)",
-            X = Pos.Center() + 4,
+            Text = "返回 (Esc)",
+            X = Pos.Center() + 14,
             Y = Pos.AnchorEnd(1),
             ShadowStyle = ShadowStyles.None
         };
         closeBtn.SetScheme(TransparentDialogScheme);
         closeBtn.Accepting += (s, e) => Application.RequestStop();
 
-        dlg.Add(addrLabel, portLabel, portField, portHintLabel, tuiAudioLabel, tuiAudioBtn, openBtn, closeBtn);
+        dlg.Add(addrLabel, portLabel, portField, portHintLabel, tuiAudioLabel, tuiAudioBtn, openBtn, stopBtn, closeBtn);
 
         dlg.KeyDown += (s, k) =>
         {
@@ -472,6 +499,11 @@ public sealed partial class MainWindow
             {
                 k.Handled = true;
                 DoOpenBrowser();
+            }
+            else if (k == Key.S || k.AsRune.Value == 's' || k.AsRune.Value == 'S')
+            {
+                k.Handled = true;
+                DoStopServer();
             }
             else if (k == Key.T || k.AsRune.Value == 't' || k.AsRune.Value == 'T')
             {

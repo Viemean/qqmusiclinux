@@ -1505,6 +1505,33 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void StopStandaloneWebServer()
+    {
+        try
+        {
+            if (_standaloneWebServer != null)
+            {
+                if (_standaloneWebServer.IsRunning)
+                {
+                    _standaloneWebServer.Stop();
+                }
+                _standaloneWebServer = null;
+            }
+
+            if (_isTuiAudioDisabled)
+            {
+                _ = SetTuiAudioDisabledAsync(false);
+            }
+
+            UpdateTopRightButtonsLayout();
+            _controlBar.UpdateStatus("Web服务已关闭");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("MainWindow", "StopStandaloneWebServer error", ex);
+        }
+    }
+
     private void EnableWebAodWatchdog()
     {
         if (_aodInactivityTimerToken != null) return;
