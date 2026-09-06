@@ -4,7 +4,7 @@ using QQMusic.Tui.Utils;
 
 namespace QQMusic.Tui.Player;
 
-public sealed partial class GstPlayer : IDisposable
+public sealed partial class GstPlayer : IPlayer
 {
     private const string LibGst = "libgstreamer-1.0.so.0";
 
@@ -19,6 +19,7 @@ public sealed partial class GstPlayer : IDisposable
     private readonly Lock _lock = new();
     private bool _disposed;
 
+    public bool IsAvailable => _pipeline != 0;
     public bool IsPlaying { get; private set; }
     public double CurrentPositionSeconds { get; private set; }
     public double TotalDurationSeconds { get; private set; }
@@ -48,11 +49,20 @@ public sealed partial class GstPlayer : IDisposable
                 }
             }
 
-            Task.Run(PollingLoopAsync);
+            if (_pipeline != 0)
+            {
+                Task.Run(PollingLoopAsync);
+            }
+        }
+        catch (DllNotFoundException dllEx)
+        {
+            AppLogger.Warn("GstPlayer", $"GStreamer library {LibGst} not found on this system: {dllEx.Message}");
+            _pipeline = 0;
         }
         catch (Exception ex)
         {
             AppLogger.Error("GstPlayer", "Exception during GStreamer initialization", ex);
+            _pipeline = 0;
         }
     }
 

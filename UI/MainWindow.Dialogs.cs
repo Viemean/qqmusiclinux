@@ -5,6 +5,7 @@ using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 using QQMusic.Tui.Api;
 using QQMusic.Tui.Models;
+using QQMusic.Tui.Services;
 using QQMusic.Tui.Utils;
 
 namespace QQMusic.Tui.UI;
@@ -281,6 +282,7 @@ public sealed partial class MainWindow
             UserSession.Current.Save();
             _mprisService.Dispose();
             _player.Dispose();
+            _standaloneWebServer?.Dispose();
             Application.RequestStop();
         }
     }
@@ -316,5 +318,175 @@ public sealed partial class MainWindow
         {
             _isAudioRecognitionActive = false;
         }
+    }
+
+    private void ShowWebStatusDialog(string url)
+    {
+        var dlg = new Dialog
+        {
+            Title = "Web 协同服务配置",
+            Width = 62,
+            Height = 11
+        };
+
+        string GetAddressText(int port)
+        {
+            var lanIp = WebPlaybackServer.GetLocalLanIp();
+            return lanIp != null
+                ? $"服务地址: http://0.0.0.0:{port}/ ({lanIp})"
+                : $"服务地址: http://0.0.0.0:{port}/";
+        }
+
+        var addrLabel = new Label
+        {
+            Text = GetAddressText(_webServerPort),
+            X = Pos.Center(),
+            Y = 1,
+            TextAlignment = Alignment.Center
+        };
+
+        var portLabel = new Label
+        {
+            Text = "服务端口:",
+            X = 3,
+            Y = 3
+        };
+
+        var portField = new TextField
+        {
+            Text = _webServerPort.ToString(),
+            X = 13,
+            Y = 3,
+            Width = 9
+        };
+        portField.SetScheme(TransparentDialogScheme);
+
+        var portHintLabel = new Label
+        {
+            Text = "(按回车直接应用)",
+            X = 24,
+            Y = 3
+        };
+
+        var tuiAudioLabel = new Label
+        {
+            Text = "TUI音频:",
+            X = 3,
+            Y = 5
+        };
+
+        var tuiAudioBtn = new Button
+        {
+            Text = _isTuiAudioDisabled ? "已禁用 (清理进程，仅Web播放) [T]" : "已开启 (本地硬件输出) [T]",
+            X = 13,
+            Y = 5,
+            ShadowStyle = ShadowStyles.None
+        };
+        tuiAudioBtn.SetScheme(TransparentDialogScheme);
+
+        void UpdateTuiAudioBtn()
+        {
+            tuiAudioBtn.Text = _isTuiAudioDisabled ? "已禁用 (清理进程，仅Web播放) [T]" : "已开启 (本地硬件输出) [T]";
+        }
+
+        void DoToggleTuiAudio()
+        {
+            _ = SetTuiAudioDisabledAsync(!_isTuiAudioDisabled);
+            UpdateTuiAudioBtn();
+        }
+
+        tuiAudioBtn.Accepting += (s, e) => DoToggleTuiAudio();
+
+        void DoApplyPort()
+        {
+            var portStr = portField.Text?.ToString()?.Trim();
+            if (int.TryParse(portStr, out int p) && p >= 1024 && p <= 65535)
+            {
+                if (p != _webServerPort)
+                {
+                    _webServerPort = p;
+                    RestartStandaloneWebServer(p);
+                    addrLabel.Text = GetAddressText(_webServerPort);
+                    _controlBar.UpdateStatus($"Web服务已迁移至端口: {_webServerPort}");
+                }
+            }
+            else
+            {
+                _controlBar.UpdateStatus("端口无效，请输入 1024~65535 范围端口");
+            }
+        }
+
+        portField.Accepting += (s, e) => DoApplyPort();
+        portField.KeyDown += (s, k) =>
+        {
+            if (k == Key.Enter || k.AsRune.Value == '\r' || k.AsRune.Value == '\n')
+            {
+                k.Handled = true;
+                DoApplyPort();
+            }
+        };
+
+        var openBtn = new Button
+        {
+            Text = "浏览器打开 (B)",
+            X = Pos.Center() - 14,
+            Y = Pos.AnchorEnd(1),
+            ShadowStyle = ShadowStyles.None
+        };
+        openBtn.SetScheme(TransparentDialogScheme);
+
+        void DoOpenBrowser()
+        {
+            try
+            {
+                string openTarget = $"http://127.0.0.1:{_webServerPort}/";
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "xdg-open",
+                    Arguments = openTarget,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+            }
+            catch {}
+            Application.RequestStop();
+        }
+
+        openBtn.Accepting += (s, e) => DoOpenBrowser();
+
+        var closeBtn = new Button
+        {
+            Text = "关闭 (Esc)",
+            X = Pos.Center() + 4,
+            Y = Pos.AnchorEnd(1),
+            ShadowStyle = ShadowStyles.None
+        };
+        closeBtn.SetScheme(TransparentDialogScheme);
+        closeBtn.Accepting += (s, e) => Application.RequestStop();
+
+        dlg.Add(addrLabel, portLabel, portField, portHintLabel, tuiAudioLabel, tuiAudioBtn, openBtn, closeBtn);
+
+        dlg.KeyDown += (s, k) =>
+        {
+            if (k == Key.B || k.AsRune.Value == 'b' || k.AsRune.Value == 'B')
+            {
+                k.Handled = true;
+                DoOpenBrowser();
+            }
+            else if (k == Key.T || k.AsRune.Value == 't' || k.AsRune.Value == 'T')
+            {
+                k.Handled = true;
+                DoToggleTuiAudio();
+            }
+            else if (k == Key.Esc || k.AsRune.Value == 'q' || k.AsRune.Value == 'Q')
+            {
+                k.Handled = true;
+                Application.RequestStop();
+            }
+        };
+
+        MikuTheme.ApplyTo(dlg, TransparentDialogScheme);
+        closeBtn.SetFocus();
+        Application.Run(dlg);
     }
 }

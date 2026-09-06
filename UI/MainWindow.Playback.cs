@@ -53,6 +53,18 @@ public sealed partial class MainWindow
             _aodView.UpdateSong(song);
         });
 
+        _player.UpdateCurrentSong(song);
+        if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+        {
+            _standaloneWebServer.CurrentSong = song;
+            _standaloneWebServer.IsCurrentSongFavorite = isFav;
+            _standaloneWebServer.CurrentPlayUrl = null;
+            _standaloneWebServer.IsPlaying = false;
+            _standaloneWebServer.CurrentPositionSeconds = 0;
+            _standaloneWebServer.TotalDurationSeconds = song.Duration;
+            _standaloneWebServer.BroadcastState("song_change");
+        }
+
         // 切歌时先停止旧播放并清空旧歌词，杜绝时间戳定时器与歌词列表索引竞争闪退
         await _player.StopAsync();
         _currentLyrics.Clear();
@@ -111,6 +123,12 @@ public sealed partial class MainWindow
 
         _currentLyrics.Clear();
         _currentLyrics.AddRange(lyrics);
+        _player.UpdateCurrentLyrics(lyrics);
+        if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+        {
+            _standaloneWebServer.CurrentLyrics = lyrics;
+            _standaloneWebServer.BroadcastState("lyrics_change");
+        }
 
         var hasTrans = LyricParser.HasTranslation(_currentLyrics);
         Application.Invoke(() =>
@@ -122,7 +140,33 @@ public sealed partial class MainWindow
 
         if (!string.IsNullOrEmpty(playUrl))
         {
-            await _player.PlayAsync(playUrl, song.Duration, startPosition);
+            if (!_isTuiAudioDisabled)
+            {
+                try
+                {
+                    await _player.PlayAsync(playUrl, song.Duration, startPosition);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("MainWindow", $"Local audio output failed: {ex.Message}");
+                }
+            }
+            else
+            {
+                _isWebPlaying = true;
+                _webVirtualPosition = startPosition;
+                StartWebVirtualTicker(song.Duration);
+            }
+
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+            {
+                _standaloneWebServer.CurrentPlayUrl = playUrl;
+                _standaloneWebServer.TotalDurationSeconds = song.Duration;
+                _standaloneWebServer.CurrentPositionSeconds = startPosition;
+                _standaloneWebServer.IsPlaying = true;
+                _standaloneWebServer.IsCurrentSongFavorite = isFav;
+                _standaloneWebServer.BroadcastState("play");
+            }
             UserSession.Current.LastPlayedSong = song;
             UserSession.Current.LastPlaybackPositionSeconds = startPosition;
             UserSession.Current.Save();
@@ -431,8 +475,13 @@ public sealed partial class MainWindow
         _controlBar.SetCurrentSong(_activeSong);
         _controlBar.UpdateQuality(AudioQualityHelper.GetBadge(_actualQualityTier));
         _controlBar.UpdateVolume(_player.Volume, _player.Volume == 0);
-        _controlBar.UpdatePlayingState(_player.IsPlaying);
-        _mprisService.UpdatePlaybackStatus(_player.IsPlaying);
+        bool isPlaying = _isTuiAudioDisabled ? _isWebPlaying : _player.IsPlaying;
+        _controlBar.UpdatePlayingState(isPlaying);
+        _mprisService.UpdatePlaybackStatus(isPlaying);
+        if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+        {
+            _standaloneWebServer.IsPlaying = isPlaying;
+        }
     }
 
     private void AdjustVolume(int delta)
@@ -569,6 +618,68 @@ public sealed partial class MainWindow
                     }
                 }
                 _lyricScrollBar?.UpdateMetrics(sourceCount, _lyricListView.Viewport.Height, _lyricListView.Viewport.Y);
+            }
+        }
+    }
+
+    private async Task CycleQualityTierAsync()
+    {
+        // 循环切换音质：Standard (0) -> HQ (1) -> SQ (2) -> HiRes (3) -> Standard (0)
+        var nextTier = _preferredQualityTier switch
+        {
+            AudioQualityTier.Standard => AudioQualityTier.HQ,
+            AudioQualityTier.HQ => AudioQualityTier.SQ,
+            AudioQualityTier.SQ => AudioQualityTier.HiRes,
+            _ => AudioQualityTier.Standard
+        };
+        await SwitchQualityTierAsync(nextTier);
+    }
+
+    private async Task SwitchQualityTierAsync(AudioQualityTier newTier)
+    {
+        _preferredQualityTier = newTier;
+        UserSession.Current.PreferredQuality = AudioQualityHelper.GetBadge(newTier);
+        UserSession.Current.Save();
+
+        if (_activeSong != null && !_activeSong.IsLocal)
+        {
+            double currentPos = _isTuiAudioDisabled ? _webVirtualPosition : _player.CurrentPositionSeconds;
+            var (url, quality, actualTier) = await QqMusicApi.GetPlayUrlForTierAsync(_activeSong.Mid, _activeSong.EffectiveMediaMid, newTier);
+            if (!string.IsNullOrEmpty(url))
+            {
+                _actualQualityTier = actualTier;
+                _activeSong.Quality = quality;
+                if (!_isTuiAudioDisabled)
+                {
+                    await _player.PlayAsync(url, _activeSong.Duration, currentPos);
+                }
+                Application.Invoke(() =>
+                {
+                    _controlBar.UpdateQuality(AudioQualityHelper.GetBadge(actualTier));
+                    _nowPlayingView.SetSong(_activeSong, AudioQualityHelper.GetBadge(actualTier));
+                    UpdatePlayerStatus();
+                });
+                if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+                {
+                    _standaloneWebServer.CurrentPlayUrl = url;
+                    _standaloneWebServer.ActualQualityTier = actualTier;
+                    _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
+                    _standaloneWebServer.CurrentPositionSeconds = currentPos;
+                    _standaloneWebServer.BroadcastState("play");
+                }
+            }
+        }
+        else
+        {
+            Application.Invoke(() =>
+            {
+                _controlBar.UpdateQuality(AudioQualityHelper.GetBadge(_preferredQualityTier));
+            });
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+            {
+                _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
+                _standaloneWebServer.ActualQualityTier = _preferredQualityTier;
+                _standaloneWebServer.BroadcastState("quality_change");
             }
         }
     }

@@ -87,40 +87,85 @@ public static partial class Program
             }
         }
 
+        bool useWebMode = args.Contains("--web") || Environment.GetEnvironmentVariable("QQMUSIC_WEB") == "1";
+        int webPort = 9999;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if ((args[i] == "--web-port" || args[i] == "-p") && i + 1 < args.Length && int.TryParse(args[i + 1], out var p))
+            {
+                webPort = p;
+            }
+        }
+        if (int.TryParse(Environment.GetEnvironmentVariable("QQMUSIC_WEB_PORT"), out var envPort))
+        {
+            webPort = envPort;
+        }
+
+        bool initialAudioEnabled = !args.Contains("--no-audio") &&
+                                   !args.Contains("--web-no-audio") &&
+                                   Environment.GetEnvironmentVariable("QQMUSIC_NO_AUDIO") != "1";
+
+        IPlayer player;
+        if (useWebMode)
+        {
+            QQMusic.Tui.Utils.AppLogger.Info("Program", $"Starting with WebPlayer on port {webPort}, audioEnabled={initialAudioEnabled}");
+            var webPlayer = new WebPlayer(webPort, initialAudioEnabled);
+            webPlayer.Initialize();
+            player = webPlayer;
+        }
+        else
+        {
+            var gstPlayer = new GstPlayer();
+            gstPlayer.Initialize();
+            if (!gstPlayer.IsAvailable)
+            {
+                QQMusic.Tui.Utils.AppLogger.Warn("Program", "GStreamer is not available on this system (e.g. Android PRoot). Falling back to WebPlayer.");
+                gstPlayer.Dispose();
+                var webPlayer = new WebPlayer(webPort, initialAudioEnabled);
+                webPlayer.Initialize();
+                player = webPlayer;
+                useWebMode = true;
+            }
+            else
+            {
+                player = gstPlayer;
+            }
+        }
+
         try
         {
-            using var player = new GstPlayer();
-            player.Initialize();
+            using (player)
+            {
+                Application.Init();
+                if (Application.Driver != null)
+                {
+                    Application.Driver.Force16Colors = false;
+                }
+                MikuTheme.Apply();
 
-            Application.Init();
-            if (Application.Driver != null)
-            {
-                Application.Driver.Force16Colors = false;
-            }
-            MikuTheme.Apply();
+                var mainWindow = new MainWindow(player, useWebMode);
 
-            var mainWindow = new MainWindow(player);
-
-            try
-            {
-                Application.Run(mainWindow);
-            }
-            catch (IOException ioEx)
-            {
-                QQMusic.Tui.Utils.AppLogger.Fatal("Fatal", "Terminal I/O stream broken or disconnected", ioEx);
-            }
-            catch (Exception runEx)
-            {
-                QQMusic.Tui.Utils.AppLogger.Fatal("Fatal", "Terminal.Gui Application.Run encountered an exception", runEx);
-            }
-            finally
-            {
                 try
                 {
-                    Application.Shutdown();
+                    Application.Run(mainWindow);
                 }
-                catch
+                catch (IOException ioEx)
                 {
+                    QQMusic.Tui.Utils.AppLogger.Fatal("Fatal", "Terminal I/O stream broken or disconnected", ioEx);
+                }
+                catch (Exception runEx)
+                {
+                    QQMusic.Tui.Utils.AppLogger.Fatal("Fatal", "Terminal.Gui Application.Run encountered an exception", runEx);
+                }
+                finally
+                {
+                    try
+                    {
+                        Application.Shutdown();
+                    }
+                    catch
+                    {
+                    }
                 }
             }
         }

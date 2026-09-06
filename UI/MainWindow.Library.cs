@@ -172,6 +172,11 @@ public sealed partial class MainWindow
                 if (_activeSong?.Mid == song.Mid)
                 {
                     Application.Invoke(() => _controlBar.SetFavoriteStatus(false));
+                    if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+                    {
+                        _standaloneWebServer.IsCurrentSongFavorite = false;
+                        _standaloneWebServer.BroadcastState("favorite_change");
+                    }
                 }
 
                 _controlBar.UpdateStatus($"[取消收藏成功] 已将《{song.Title}》从我的喜欢中移除");
@@ -201,6 +206,11 @@ public sealed partial class MainWindow
                 if (_activeSong?.Mid == song.Mid)
                 {
                     Application.Invoke(() => _controlBar.SetFavoriteStatus(true));
+                    if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+                    {
+                        _standaloneWebServer.IsCurrentSongFavorite = true;
+                        _standaloneWebServer.BroadcastState("favorite_change");
+                    }
                 }
 
                 _controlBar.UpdateStatus($"[收藏成功] 已将《{song.Title}》添加至我的喜欢");

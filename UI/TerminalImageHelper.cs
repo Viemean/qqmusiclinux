@@ -194,7 +194,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureAlbumCoverAsync(string albumMid)
     {
-        if (!IsImageSupported || string.IsNullOrWhiteSpace(albumMid)) return null;
+        if (string.IsNullOrWhiteSpace(albumMid)) return null;
 
         var pngFile = Path.Combine(s_cacheDir, $"{albumMid}.png");
         if (File.Exists(pngFile))
@@ -241,6 +241,11 @@ public static class TerminalImageHelper
             return null;
         }
 
+        if (!IsImageSupported)
+        {
+            return localFile;
+        }
+
         // 应用平滑 6px 圆角遮罩处理（无外扩阴影）
         var processed = await ApplyRoundedCornersAsync(localFile, pngFile);
         return processed ?? localFile;
@@ -251,7 +256,8 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureLocalImageProcessedAsync(string localRawImagePath, string cacheKey)
     {
-        if (!IsImageSupported || string.IsNullOrWhiteSpace(localRawImagePath) || !File.Exists(localRawImagePath)) return null;
+        if (string.IsNullOrWhiteSpace(localRawImagePath) || !File.Exists(localRawImagePath)) return null;
+        if (!IsImageSupported) return localRawImagePath;
 
         var pngFile = Path.Combine(s_cacheDir, $"local_{cacheKey}.png");
         if (File.Exists(pngFile))
@@ -272,7 +278,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureSingerCoverAsync(string singerMid)
     {
-        if (!IsImageSupported || string.IsNullOrWhiteSpace(singerMid)) return null;
+        if (string.IsNullOrWhiteSpace(singerMid)) return null;
 
         var pngFile = Path.Combine(s_cacheDir, $"singer_{singerMid}.png");
         if (File.Exists(pngFile))
@@ -311,6 +317,11 @@ public static class TerminalImageHelper
             return null;
         }
 
+        if (!IsImageSupported)
+        {
+            return localFile;
+        }
+
         var processed = await ApplyRoundedCornersAsync(localFile, pngFile);
         return processed ?? localFile;
     }
@@ -320,7 +331,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureSingleCoverAsync(string songMid, string vsMid)
     {
-        if (!IsImageSupported || string.IsNullOrWhiteSpace(songMid) || string.IsNullOrWhiteSpace(vsMid)) return null;
+        if (string.IsNullOrWhiteSpace(songMid) || string.IsNullOrWhiteSpace(vsMid)) return null;
 
         var pngFile = Path.Combine(s_cacheDir, $"single_{songMid}.png");
         if (File.Exists(pngFile))
@@ -363,6 +374,11 @@ public static class TerminalImageHelper
             return null;
         }
 
+        if (!IsImageSupported)
+        {
+            return localFile;
+        }
+
         var processed = await ApplyRoundedCornersAsync(localFile, pngFile);
         return processed ?? localFile;
     }
@@ -372,7 +388,7 @@ public static class TerminalImageHelper
     /// </summary>
     public static async Task<string?> EnsureSongCoverAsync(Song? song)
     {
-        if (!IsImageSupported || song == null) return null;
+        if (song == null) return null;
 
         if (song.IsLocal)
         {

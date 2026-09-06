@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>QQ Music</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- 沉浸式纯净自适应莫奈深色背景 (单色平滑深色，0 摩尔纹) -->
+  <div class="ambient-backdrop" id="ambientBackdrop"></div>
+
+  <div class="electron-layout">
+    <!-- 上半部：主视窗 (桌面双栏：大封面+歌名对齐 vs 居中歌词；移动端单列：合体封面/歌词舞台) -->
+    <main class="player-body">
+      <!-- 左列：大封面与歌曲信息 -->
+      <section class="left-pane" id="leftPane">
+        <!-- 移动端合体舞台 (移动端点击切换封面/歌词，桌面端禁止点击) -->
+        <div class="stage-view-wrapper" id="stageView" title="封面与歌词">
+          <!-- 封面容器 -->
+          <div class="cover-box" id="coverContainer">
+            <img id="albumCover" class="album-art" src="/cover" alt="专辑封面" />
+            <div id="coverFallback" class="cover-fallback">
+              <svg viewBox="0 0 24 24" width="72" height="72" fill="currentColor">
+                <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/>
+              </svg>
+            </div>
+          </div>
+
+          <!-- 移动端居中滚动歌词容器 -->
+          <div class="mobile-lyrics-container" id="mobileLyricsContainer">
+            <div class="lyrics-scroll-inner" id="mobileLyricsInner">
+              <div class="lyric-line-empty">正在加载歌词...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 歌曲信息区 (桌面端严格左对齐到封面边缘；移动端点击此区域可切回大封面) -->
+        <div class="track-meta" id="trackMeta" title="歌曲信息">
+          <div class="track-title-row">
+            <h1 id="trackTitle" class="track-title">等待播放</h1>
+            <div class="track-right-actions">
+              <!-- 移动端歌词界面下：音质徽章显示在红心爱心左边 -->
+              <button id="lyricsQualityBadge" class="badge-quality badge-quality-lyrics quality-btn-sync" type="button" title="点击切换音质">SQ</button>
+              <button id="btnLike" class="btn-icon-subtle btn-like" type="button" title="喜欢">
+                <svg class="heart-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                  <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <p id="trackArtist" class="track-artist">QQ Music TUI</p>
+        </div>
+      </section>
+
+      <!-- 右列：桌面端沉浸式多行大歌词视窗 (居中对齐) -->
+      <section class="right-pane desktop-lyrics-pane" id="desktopLyricsPane">
+        <div class="desktop-lyrics-inner" id="desktopLyricsInner">
+          <div class="lyric-line-empty desktop">该歌曲暂无歌词</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- 下半部：全宽贯穿式底部控制栏 (1:1 对标 Electron 原版) -->
+    <footer class="player-footer">
+      <!-- 细长进度条区域 -->
+      <div class="progress-zone">
+        <!-- 移动端默认封面状态下：音质徽章放置在进度条上方 -->
+        <div class="progress-top-row">
+          <span class="progress-top-spacer"></span>
+          <button id="mobileQualityBadge" class="badge-quality badge-quality-mobile quality-btn-sync" type="button" title="点击切换音质">SQ</button>
+        </div>
+        <div class="progress-bar-wrap" id="progressWrap">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="time-readout">
+          <span id="timeCurrent">00:00</span>
+          <span id="timeTotal">00:00</span>
+        </div>
+      </div>
+
+      <!-- 横向控制工具栏 (移动端 5 个按钮严格对称，大白圆播放键绝对居中) -->
+      <div class="controls-toolbar">
+        <div class="ctrl-left">
+          <button id="btnFooterLike" class="btn-icon-ctrl btn-footer-like" type="button" title="喜欢">
+            <svg class="heart-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="ctrl-center">
+          <button id="btnMode" class="btn-icon-ctrl" type="button" title="列表循环">
+            <!-- 列表循环 (默认) -->
+            <svg id="iconModeList" class="mode-icon active" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>
+            </svg>
+            <!-- 单曲循环 -->
+            <svg id="iconModeSingle" class="mode-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="display:none;">
+              <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-3V9h-1l-2 1v1h1.5v3H13z"/>
+            </svg>
+            <!-- 随机播放 -->
+            <svg id="iconModeShuffle" class="mode-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="display:none;">
+              <path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>
+            </svg>
+            <!-- 顺序播放 -->
+            <svg id="iconModeSeq" class="mode-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="display:none;">
+              <path d="M4 6h16v2H4V6zm0 5h16v2H4v-2zm0 5h10v2H4v-2zm14 0l4 3-4 3v-6z"/>
+            </svg>
+          </button>
+
+          <button id="btnPrev" class="btn-icon-ctrl" type="button" title="上一曲 (←)">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+              <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/>
+            </svg>
+          </button>
+
+          <button id="btnPlay" class="btn-play-primary" type="button" title="播放 / 暂停 (Space)">
+            <svg id="playIcon" viewBox="0 0 24 24" width="30" height="30" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+            <svg id="pauseIcon" viewBox="0 0 24 24" width="30" height="30" fill="currentColor" style="display:none;">
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+            </svg>
+          </button>
+
+          <button id="btnNext" class="btn-icon-ctrl" type="button" title="下一曲 (→)">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+              <path d="m6 18 8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+            </svg>
+          </button>
+
+          <div class="volume-container" id="volContainer">
+            <button id="btnVolume" class="btn-icon-ctrl" type="button" title="音量调节">
+              <svg id="volIcon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+              </svg>
+            </button>
+            <div class="volume-popover" id="volPopover">
+              <input type="range" id="volSlider" class="vol-slider" min="0" max="100" value="80" title="调节网页音量" />
+              <span class="vol-num" id="volNum">80%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ctrl-right">
+          <button id="qualityBadge" class="badge-quality quality-btn-sync" type="button" title="点击切换音质 (同步 TUI)">SQ</button>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <audio id="audioElement" preload="auto"></audio>
+  <script src="/app.js?v=20260906_2" type="module"></script>
+</body>
+</html>

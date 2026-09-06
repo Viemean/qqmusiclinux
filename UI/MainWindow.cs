@@ -18,7 +18,10 @@ namespace QQMusic.Tui.UI;
 /// </summary>
 public sealed partial class MainWindow : Window
 {
-    private readonly GstPlayer _player;
+    private readonly IPlayer _player;
+    private readonly bool _isWebMode;
+    private long _lastUserActivityTick = Environment.TickCount64;
+    private object? _aodInactivityTimerToken;
     private readonly MprisService _mprisService;
     private PlaybackMode _currentPlaybackMode;
     private readonly TextField _searchField;
@@ -37,6 +40,12 @@ public sealed partial class MainWindow : Window
     private readonly Label _searchLabel;
     private readonly Button _userStatusBtn;
     private readonly Button _recognizeBtn;
+    private readonly Button _webBtn;
+    private WebPlaybackServer? _standaloneWebServer;
+    private bool _isTuiAudioDisabled = false;
+    private bool _isWebPlaying = false;
+    private double _webVirtualPosition = 0;
+    private object? _webVirtualTickerToken;
     private readonly NowPlayingView _nowPlayingView;
     private bool _isNowPlayingViewActive = false;
     private readonly AodView _aodView;
@@ -117,12 +126,40 @@ public sealed partial class MainWindow : Window
     private const int PlaylistPageSize = 100;
 
     private int _preMuteVolume = 80;
+    private int _webServerPort = 9999;
     private long _lastUserLyricScrollTick = 0;
     private long _lastProgressSaveTick = 0;
 
-    public MainWindow(GstPlayer player)
+    public MainWindow(IPlayer player, bool isWebMode = false)
     {
         _player = player;
+        _isWebMode = isWebMode;
+
+        if (_player is WebPlayer webPlayer)
+        {
+            webPlayer.NextRequested += () => Application.Invoke(async () =>
+            {
+                if (_currentViewMode == ViewMode.GuessRecommend)
+                {
+                    await PlayNextRadioTrackAsync();
+                }
+                else
+                {
+                    await PlayNextInCurrentListAsync();
+                }
+            });
+            webPlayer.PreviousRequested += () => Application.Invoke(async () =>
+            {
+                if (_currentViewMode != ViewMode.GuessRecommend)
+                {
+                    await PlayPrevInCurrentListAsync();
+                }
+            });
+            webPlayer.TogglePlayRequested += () => Application.Invoke(async () =>
+            {
+                await TogglePlayOrPauseAsync();
+            });
+        }
 
         // 载入持久化登录凭证并在后台自动补齐官方 musickey
         UserSession.Load();
@@ -204,6 +241,26 @@ public sealed partial class MainWindow : Window
         };
         _recognizeBtn.Accepting += (s, e) => ShowAudioRecognitionDialog();
         Add(_recognizeBtn);
+
+        // 顶部 Web 协同按钮：独立位于账号按钮右侧，严格不绑定快捷键防止误触，仅支持鼠标点击
+        _webBtn = new Button
+        {
+            Text = "Web",
+            Y = 0,
+            ShadowStyle = ShadowStyles.None,
+            CanFocus = false
+        };
+        _webBtn.TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop;
+        _webBtn.KeyBindings.Remove(Key.Space);
+        _webBtn.MouseEvent += (s, m) =>
+        {
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked))
+            {
+                HandleWebButtonClicked();
+            }
+        };
+        _webBtn.Accepting += (s, e) => HandleWebButtonClicked();
+        Add(_webBtn);
 
         _searchField = new TextField
         {
@@ -653,15 +710,7 @@ public sealed partial class MainWindow : Window
         };
         _controlBar.PlayPauseClicked += async () =>
         {
-            if (_activeSong != null && !_player.IsPlaying && _player.TotalDurationSeconds <= 0)
-            {
-                await PlaySongAsync(_activeSong, UserSession.Current.LastPlaybackPositionSeconds);
-            }
-            else
-            {
-                await _player.TogglePauseAsync();
-                UpdatePlayerStatus();
-            }
+            await TogglePlayOrPauseAsync();
         };
         _controlBar.NextClicked += async () =>
         {
@@ -730,7 +779,7 @@ public sealed partial class MainWindow : Window
         // 底部快捷键操作指南（独立放置在控制栏UI方框下方最底行，干净平整无边框干扰）
         _hotkeyHintLabel = new Label
         {
-            Text = " [V]播放界面  [P]沉浸  [O]播放顺序  [S]收藏  [T]翻译  [/]搜索  [J]上一首  [L]下一首  [M]静音  [R]识曲",
+            Text = " [V]播放界面  [P]沉浸  [O]播放顺序  [S]收藏  [T]翻译  [/]搜索  [J]上一首  [L]下一首  [M]静音  [R]识曲  [W]Web",
             X = 0,
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
@@ -842,6 +891,22 @@ public sealed partial class MainWindow : Window
             Visible = false
         };
         Add(_aodView);
+        if (_isWebMode)
+        {
+            _lastUserActivityTick = Environment.TickCount64;
+            _aodInactivityTimerToken = Application.AddTimeout(TimeSpan.FromSeconds(1), () =>
+            {
+                if (!_isAodMode && Environment.TickCount64 - _lastUserActivityTick >= 15000)
+                {
+                    Application.Invoke(EnterAodMode);
+                }
+                return true;
+            });
+            if (_player is WebPlayer wp)
+            {
+                _controlBar.UpdateStatus($"Web播放已就绪: {wp.Url} (15秒无操作息屏)");
+            }
+        }
         _controlBar.NowPlayingClicked += ToggleNowPlayingView;
 
         // 窗口整体尺寸改变时同步更新沉浸式播放界面的封面或详情页写真
@@ -857,15 +922,17 @@ public sealed partial class MainWindow : Window
             }
         };
 
-        // 鼠标活动唤醒沉浸模式下自动隐藏的图标
+        // 鼠标活动唤醒沉浸模式下自动隐藏的图标与刷新无操作看门狗
         MouseEvent += (s, m) =>
         {
+            _lastUserActivityTick = Environment.TickCount64;
             TriggerImmersiveActivity();
         };
 
         // 全局顶层按键预捕获，除搜索框文字输入外，统一拦截分发全局播放与视图快捷键
         Application.KeyDown += async (s, k) =>
         {
+            _lastUserActivityTick = Environment.TickCount64;
             TriggerImmersiveActivity();
 
             // 1. 若当前处于任何弹窗（Dialog/Modal）中，绝不拦截按键，全部交由弹窗处理
@@ -881,15 +948,9 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            // 2.5. AOD 后台息屏模式：界面停止响应除 Esc（退出后台模式）和 Q/q（退出确认弹窗）之外的全部全局按键
+            // 2.5. AOD 后台息屏模式：任意键唤醒恢复主界面（按 Q/q 仍触发确认退出）
             if (_isAodMode)
             {
-                if (k == Key.Esc)
-                {
-                    k.Handled = true;
-                    ExitAodMode();
-                    return;
-                }
                 if (k.AsRune.Value == 'q' || k.AsRune.Value == 'Q')
                 {
                     k.Handled = true;
@@ -898,6 +959,7 @@ public sealed partial class MainWindow : Window
                 }
 
                 k.Handled = true;
+                ExitAodMode();
                 return;
             }
 
@@ -1022,15 +1084,7 @@ public sealed partial class MainWindow : Window
             if (k == Key.Space)
             {
                 k.Handled = true;
-                if (_activeSong != null && !_player.IsPlaying && _player.TotalDurationSeconds <= 0)
-                {
-                    await PlaySongAsync(_activeSong, UserSession.Current.LastPlaybackPositionSeconds);
-                }
-                else
-                {
-                    await _player.TogglePauseAsync();
-                    UpdatePlayerStatus();
-                }
+                await TogglePlayOrPauseAsync();
                 return;
             }
 
@@ -1066,6 +1120,13 @@ public sealed partial class MainWindow : Window
             {
                 k.Handled = true;
                 ShowAudioRecognitionDialog();
+                return;
+            }
+
+            if (c == 'W')
+            {
+                k.Handled = true;
+                HandleWebButtonClicked();
                 return;
             }
 
@@ -1255,35 +1316,331 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 动态刷新顶部右上角按钮（账号状态按钮与识曲按钮）的防重叠独立布局
-    /// 保证 [ 识曲 ] 独立位于 [ 账号 ] 左侧并间隔 2 列安全距离，杜绝文字变长物理重叠
+    /// 动态刷新顶部右上角按钮（识曲、账号状态与 Web 协同按钮）的防重叠独立布局
+    /// 自右向左依次排列：[ Web ] -> [ 账号 ] -> [ 识曲 ]
     /// </summary>
     internal void UpdateTopRightButtonsLayout()
     {
-        if (_userStatusBtn == null || _recognizeBtn == null || _searchField == null) return;
+        if (_userStatusBtn == null || _recognizeBtn == null || _webBtn == null || _searchField == null) return;
 
+        // 1. 最右侧：Web 协同按钮 [ Web ] (右侧保留 1 列安全留白)
+        var isWebRunning = (_standaloneWebServer?.IsRunning == true) || (_player is WebPlayer);
+        var webText = isWebRunning ? "Web:开" : "Web";
+        _webBtn.Text = webText;
+        int webBtnWidth = GetVisualWidth(webText) + 4;
+        int webAnchorOffset = webBtnWidth + 1;
+        _webBtn.X = Pos.AnchorEnd(webAnchorOffset);
+
+        // 2. 账号按钮 [ 账号: ... ] (排在 Web 按钮左侧，间隔 2 列)
         var statusText = GetUserStatusText();
         _userStatusBtn.Text = statusText;
-
-        // Terminal.Gui 按钮包含外围 "[ " 和 " ]"，故额外占用 4 列
         int userBtnWidth = GetVisualWidth(statusText) + 4;
-        // 账号按钮紧靠右上角 (右侧保留 1 列安全留白)
-        int userAnchorOffset = userBtnWidth + 1;
+        int userAnchorOffset = webAnchorOffset + 2 + userBtnWidth;
         _userStatusBtn.X = Pos.AnchorEnd(userAnchorOffset);
 
-        // 识曲按钮 [ 识曲 ]
+        // 3. 识曲按钮 [ 识曲 ] (排在账号按钮左侧，间隔 2 列)
         const string recText = "识曲";
         _recognizeBtn.Text = recText;
         int recBtnWidth = GetVisualWidth(recText) + 4;
-
-        // 识曲按钮排在账号按钮左边，间隔 2 列独立分开
         int recAnchorOffset = userAnchorOffset + 2 + recBtnWidth;
         _recognizeBtn.X = Pos.AnchorEnd(recAnchorOffset);
 
-        // 搜索框自动填满左侧剩余空间 (避开识曲与账号按钮并留出 2 列间距)
+        // 4. 搜索框自动填满左侧剩余空间 (避开识曲、账号与 Web 按钮并留出 2 列间距)
         _searchField.Width = Dim.Fill(recAnchorOffset + 2);
 
         SetNeedsLayout();
+    }
+
+    private void HandleWebButtonClicked()
+    {
+        if (_player is WebPlayer webPlayer)
+        {
+            ShowWebStatusDialog(webPlayer.Url);
+            return;
+        }
+
+        if (_standaloneWebServer == null || !_standaloneWebServer.IsRunning)
+        {
+            StartStandaloneWebServer(openDialog: true);
+        }
+        else
+        {
+            ShowWebStatusDialog(_standaloneWebServer.LocalUrl);
+        }
+    }
+
+    private void StartStandaloneWebServer(bool openDialog = true)
+    {
+        try
+        {
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+            {
+                _standaloneWebServer.Stop();
+            }
+
+            _standaloneWebServer = new WebPlaybackServer();
+            _standaloneWebServer.CurrentSong = _activeSong;
+            _standaloneWebServer.CurrentLyrics = _currentLyrics;
+            _standaloneWebServer.IsPlaying = _isTuiAudioDisabled ? _isWebPlaying : _player.IsPlaying;
+            _standaloneWebServer.Volume = _player.Volume;
+            _standaloneWebServer.CurrentPositionSeconds = _isTuiAudioDisabled ? _webVirtualPosition : _player.CurrentPositionSeconds;
+            _standaloneWebServer.TotalDurationSeconds = _player.TotalDurationSeconds;
+            _standaloneWebServer.IsCurrentSongFavorite = _activeSong != null && _controlBar.IsFavorite;
+            _standaloneWebServer.CurrentPlaybackMode = _currentPlaybackMode;
+            _standaloneWebServer.ActualQualityTier = _actualQualityTier;
+            _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
+
+            _standaloneWebServer.NextRequested += () => Application.Invoke(async () =>
+            {
+                if (_currentViewMode == ViewMode.GuessRecommend)
+                    await PlayNextRadioTrackAsync();
+                else
+                    await PlayNextInCurrentListAsync();
+            });
+            _standaloneWebServer.PreviousRequested += () => Application.Invoke(async () =>
+            {
+                if (_currentViewMode != ViewMode.GuessRecommend)
+                    await PlayPrevInCurrentListAsync();
+            });
+            _standaloneWebServer.TogglePlayRequested += () => Application.Invoke(async () =>
+            {
+                await TogglePlayOrPauseAsync();
+            });
+            _standaloneWebServer.ToggleFavoriteRequested += () => Application.Invoke(async () =>
+            {
+                var targetSong = _activeSong;
+                if (targetSong != null)
+                {
+                    await ToggleSongFavoriteAsync(targetSong);
+                }
+            });
+            _standaloneWebServer.ToggleModeRequested += () => Application.Invoke(TogglePlaybackMode);
+            _standaloneWebServer.ToggleQualityRequested += () => Application.Invoke(async () =>
+            {
+                await CycleQualityTierAsync();
+            });
+            _standaloneWebServer.SeekRequested += sec =>
+            {
+                if (_isTuiAudioDisabled)
+                {
+                    _webVirtualPosition = sec;
+                    Application.Invoke(() =>
+                    {
+                        UpdateProgress(sec);
+                        UpdateLyrics(sec);
+                    });
+                }
+                else
+                {
+                    _ = _player.SeekAsync(sec);
+                }
+            };
+            _standaloneWebServer.VolumeRequested += vol =>
+            {
+                // 音量仅由 Web 独立掌控，无需同步 TUI
+                _standaloneWebServer.Volume = vol;
+            };
+            _standaloneWebServer.ProgressReported += (pos, dur) =>
+            {
+                if (_isTuiAudioDisabled)
+                {
+                    _webVirtualPosition = pos;
+                    Application.Invoke(() =>
+                    {
+                        UpdateProgress(pos);
+                        UpdateLyrics(pos);
+                    });
+                }
+            };
+            _standaloneWebServer.PlaybackEnded += () =>
+            {
+                if (_isTuiAudioDisabled)
+                {
+                    Application.Invoke(async () =>
+                    {
+                        if (_currentViewMode == ViewMode.GuessRecommend)
+                            await PlayNextRadioTrackAsync();
+                        else if (_currentPlaybackMode == PlaybackMode.SingleLoop && _activeSong != null)
+                            await PlaySongAsync(_activeSong, 0);
+                        else
+                            await PlayNextInCurrentListAsync();
+                    });
+                }
+            };
+
+            var ok = _standaloneWebServer.Start(_webServerPort, initialAudioOutput: true);
+            if (ok)
+            {
+                UpdateTopRightButtonsLayout();
+                _controlBar.UpdateStatus($"Web服务已启动: {_standaloneWebServer.LocalUrl} (15秒无操作息屏)");
+                EnableWebAodWatchdog();
+                if (openDialog)
+                {
+                    ShowWebStatusDialog(_standaloneWebServer.LocalUrl);
+                }
+            }
+            else
+            {
+                _controlBar.UpdateStatus($"Web服务启动失败，请检查端口 {_webServerPort} 是否被占用");
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("MainWindow", "StartStandaloneWebServer error", ex);
+        }
+    }
+
+    private bool RestartStandaloneWebServer(int port)
+    {
+        try
+        {
+            _webServerPort = port;
+            StartStandaloneWebServer(openDialog: false);
+            return _standaloneWebServer?.IsRunning == true;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Error("MainWindow", "RestartStandaloneWebServer error", ex);
+            return false;
+        }
+    }
+
+    private void EnableWebAodWatchdog()
+    {
+        if (_aodInactivityTimerToken != null) return;
+        _lastUserActivityTick = Environment.TickCount64;
+        _aodInactivityTimerToken = Application.AddTimeout(TimeSpan.FromSeconds(1), () =>
+        {
+            if (!_isAodMode && Environment.TickCount64 - _lastUserActivityTick >= 15000)
+            {
+                Application.Invoke(EnterAodMode);
+            }
+            return true;
+        });
+    }
+
+    private async Task TogglePlayOrPauseAsync()
+    {
+        if (_activeSong != null && !_player.IsPlaying && !_isWebPlaying && _player.TotalDurationSeconds <= 0)
+        {
+            await PlaySongAsync(_activeSong, UserSession.Current.LastPlaybackPositionSeconds);
+            return;
+        }
+
+        if (_isTuiAudioDisabled)
+        {
+            _isWebPlaying = !_isWebPlaying;
+            if (_isWebPlaying)
+            {
+                if (_activeSong != null) StartWebVirtualTicker(_activeSong.Duration);
+            }
+            else
+            {
+                StopWebVirtualTicker();
+            }
+
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+            {
+                _standaloneWebServer.IsPlaying = _isWebPlaying;
+                _standaloneWebServer.BroadcastState(_isWebPlaying ? "play" : "pause");
+            }
+            UpdatePlayerStatus();
+        }
+        else
+        {
+            await _player.TogglePauseAsync();
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+            {
+                _standaloneWebServer.IsPlaying = _player.IsPlaying;
+                _standaloneWebServer.BroadcastState(_player.IsPlaying ? "play" : "pause");
+            }
+            UpdatePlayerStatus();
+        }
+    }
+
+    private async Task SetTuiAudioDisabledAsync(bool disabled)
+    {
+        _isTuiAudioDisabled = disabled;
+        if (_isTuiAudioDisabled)
+        {
+            try
+            {
+                await _player.StopAsync();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Debug("MainWindow", $"Player stop error while disabling audio: {ex.Message}");
+            }
+
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning && _activeSong != null)
+            {
+                _isWebPlaying = true;
+                _standaloneWebServer.IsPlaying = true;
+                _standaloneWebServer.BroadcastState("play");
+                StartWebVirtualTicker(_activeSong.Duration);
+            }
+        }
+        else
+        {
+            StopWebVirtualTicker();
+            if (_activeSong != null && _standaloneWebServer?.IsRunning == true)
+            {
+                double currentPos = _standaloneWebServer.CurrentPositionSeconds;
+                if (!string.IsNullOrEmpty(_standaloneWebServer.CurrentPlayUrl))
+                {
+                    try
+                    {
+                        await _player.PlayAsync(_standaloneWebServer.CurrentPlayUrl, _activeSong.Duration, currentPos);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn("MainWindow", $"Failed to restore local player: {ex.Message}");
+                    }
+                }
+            }
+        }
+        UpdatePlayerStatus();
+    }
+
+    private void StartWebVirtualTicker(double duration)
+    {
+        StopWebVirtualTicker();
+        _webVirtualTickerToken = Application.AddTimeout(TimeSpan.FromMilliseconds(500), () =>
+        {
+            if (!_isTuiAudioDisabled || !_isWebPlaying) return false;
+
+            _webVirtualPosition += 0.5;
+            if (duration > 0 && _webVirtualPosition >= duration)
+            {
+                _webVirtualPosition = duration;
+                Application.Invoke(async () =>
+                {
+                    if (_currentViewMode == ViewMode.GuessRecommend)
+                        await PlayNextRadioTrackAsync();
+                    else if (_currentPlaybackMode == PlaybackMode.SingleLoop && _activeSong != null)
+                        await PlaySongAsync(_activeSong, 0);
+                    else
+                        await PlayNextInCurrentListAsync();
+                });
+                return false;
+            }
+
+            Application.Invoke(() =>
+            {
+                UpdateProgress(_webVirtualPosition);
+                UpdateLyrics(_webVirtualPosition);
+            });
+            return true;
+        });
+    }
+
+    private void StopWebVirtualTicker()
+    {
+        if (_webVirtualTickerToken != null)
+        {
+            Application.RemoveTimeout(_webVirtualTickerToken);
+            _webVirtualTickerToken = null;
+        }
     }
 
     private void SwitchNextFocusWindow(bool forward)
@@ -1329,6 +1686,7 @@ public sealed partial class MainWindow : Window
         _searchField.Visible = !enable;
         _userStatusBtn.Visible = !enable;
         _recognizeBtn.Visible = !enable;
+        _webBtn.Visible = !enable;
 
         // 2. 下方控制栏与快捷键提示栏显隐
         _controlBar.Visible = !enable;
@@ -1378,6 +1736,7 @@ public sealed partial class MainWindow : Window
 
     public void TriggerImmersiveActivity()
     {
+        _lastUserActivityTick = Environment.TickCount64;
         _lastImmersiveActivityTick = Environment.TickCount64;
         if (_isImmersiveMode)
         {
@@ -1575,15 +1934,7 @@ public sealed partial class MainWindow : Window
         {
             Application.Invoke(async () =>
             {
-                if (_activeSong != null && !_player.IsPlaying && _player.TotalDurationSeconds <= 0)
-                {
-                    await PlaySongAsync(_activeSong, UserSession.Current.LastPlaybackPositionSeconds);
-                }
-                else
-                {
-                    await _player.TogglePauseAsync();
-                    UpdatePlayerStatus();
-                }
+                await TogglePlayOrPauseAsync();
             });
             return Task.CompletedTask;
         };
@@ -1755,6 +2106,11 @@ public sealed partial class MainWindow : Window
         UserSession.Current.Save();
         _controlBar.UpdatePlaybackMode(mode);
         _mprisService.UpdatePlaybackMode(mode);
+        if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+        {
+            _standaloneWebServer.CurrentPlaybackMode = mode;
+            _standaloneWebServer.BroadcastState("mode_change");
+        }
     }
 
     private long _lastToggleNowPlayingTicks = 0;
@@ -1791,6 +2147,7 @@ public sealed partial class MainWindow : Window
         _searchField.Visible = false;
         _userStatusBtn.Visible = false;
         _recognizeBtn.Visible = false;
+        _webBtn.Visible = false;
 
         _nowPlayingView.SetSong(_activeSong, AudioQualityHelper.GetBadge(_actualQualityTier));
         _nowPlayingView.SetLyrics(_currentLyrics, _showTranslation);
@@ -1812,6 +2169,7 @@ public sealed partial class MainWindow : Window
         _searchField.Visible = !_isImmersiveMode;
         _userStatusBtn.Visible = !_isImmersiveMode;
         _recognizeBtn.Visible = !_isImmersiveMode;
+        _webBtn.Visible = !_isImmersiveMode;
 
         _isSearchActive = false;
         _songListView.SetFocusToList();
@@ -1835,6 +2193,7 @@ public sealed partial class MainWindow : Window
         _searchField.Visible = false;
         _userStatusBtn.Visible = false;
         _recognizeBtn.Visible = false;
+        _webBtn.Visible = false;
         _controlBar.Visible = false;
         _hotkeyHintLabel.Visible = false;
         _sidebarTitleLabel.Visible = false;
@@ -1870,6 +2229,7 @@ public sealed partial class MainWindow : Window
             _searchField.Visible = !_isImmersiveMode;
             _userStatusBtn.Visible = !_isImmersiveMode;
             _recognizeBtn.Visible = !_isImmersiveMode;
+            _webBtn.Visible = !_isImmersiveMode;
             _sidebarTitleLabel.Visible = true;
             _songListTitleLabel.Visible = true;
             _lyricTitleLabel.Visible = true;

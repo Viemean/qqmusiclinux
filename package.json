@@ -1,0 +1,15 @@
+{
+  "name": "qqmusic-tui-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "biome check www",
+    "check:write": "biome check --write www",
+    "lint": "biome lint www",
+    "format": "biome format --write www"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4"
+  }
+}
