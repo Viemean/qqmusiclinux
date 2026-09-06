@@ -68,14 +68,16 @@ jobs:
 
   build-alpine-arm64:
     name: Build Alpine aarch64 APK
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     continue-on-error: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Install Docker
+        run: |
+          curl -fsSL https://get.docker.com | sudo sh
+          sudo systemctl start docker
 
       - name: Build and Package Alpine aarch64 APK in Docker Container
         run: |
@@ -85,7 +87,6 @@ jobs:
           fi
           chmod +x ./build-apk.sh
           docker run --rm \
-            --platform linux/arm64 \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             mcr.microsoft.com/dotnet/sdk:10.0-alpine \
