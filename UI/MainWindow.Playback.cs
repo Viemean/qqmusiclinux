@@ -65,7 +65,7 @@ public sealed partial class MainWindow
             _standaloneWebServer.BroadcastState("song_change");
         }
 
-        // 切歌时先停止旧播放并清空旧歌词，杜绝时间戳定时器与歌词列表索引竞争闪退
+        // 切歌时停止播放并清空歌词，避免索引越界
         await _player.StopAsync();
         _currentLyrics.Clear();
         _currentActiveLyricIndex = -1;
@@ -524,7 +524,7 @@ public sealed partial class MainWindow
     {
         if (_activeSong == null || _activeSong.Duration <= 0) return;
 
-        // AOD 后台息屏模式：仅在后台同步 D-Bus 位置与防抖持久化，坚决不触发前台界面控件重绘
+        // AOD 后台息屏模式：仅在后台同步 D-Bus 位置与防抖持久化，不触发前台界面控件重绘
         if (_isAodMode)
         {
             _mprisService.UpdatePosition(currentSec);
@@ -556,7 +556,7 @@ public sealed partial class MainWindow
 
     private void UpdateLyrics(double currentSec)
     {
-        if (_isAodMode) return; // AOD 模式彻底冻结歌词计算与渲染
+        if (_isAodMode) return; // AOD 模式跳过歌词计算与渲染
         _nowPlayingView.UpdatePlaybackTime(currentSec);
         if (_currentLyrics.Count == 0) return;
 

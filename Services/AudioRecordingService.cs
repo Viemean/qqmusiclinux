@@ -20,7 +20,7 @@ public enum AudioRecordSource
 }
 
 /// <summary>
-/// 纯内存实时流式录音会话 (彻底告别磁盘文件缓冲延迟，通过管道实时流入内存)
+/// 实时流式录音会话，通过管道写入内存流
 /// </summary>
 public sealed class AudioRecordingSession : IDisposable
 {
@@ -59,7 +59,7 @@ public sealed class AudioRecordingSession : IDisposable
         psi.ArgumentList.Add("1");
         psi.ArgumentList.Add("-f");
         psi.ArgumentList.Add("s16le");
-        psi.ArgumentList.Add("pipe:1"); // 纯内存标准输出管道，0 毫秒磁盘缓冲延迟！
+        psi.ArgumentList.Add("pipe:1"); // 输出到标准输出管道
 
         try
         {
@@ -105,7 +105,7 @@ public sealed class AudioRecordingSession : IDisposable
     }
 
     /// <summary>
-    /// 毫秒级无锁/快照获取当前内存中已累积的 16000Hz 单声道 16-bit PCM 采样数组
+    /// 获取当前缓冲区中已累积的 16000Hz 单声道 16-bit PCM 采样数组
     /// </summary>
     public short[] GetSnapshotSamples()
     {
@@ -155,12 +155,12 @@ public sealed class AudioRecordingSession : IDisposable
 }
 
 /// <summary>
-/// 跨 Linux 音频环境（PulseAudio / PipeWire）的高性能内存流式录音服务
+/// 音频录制服务（PulseAudio / PipeWire）
 /// </summary>
 public static class AudioRecordingService
 {
     /// <summary>
-    /// 启动内存实时流式录音会话 (输出通过标准管道实时流入内存，无任何磁盘缓冲与延迟)
+    /// 启动流式录音会话
     /// </summary>
     public static AudioRecordingSession StartRecordingSession(AudioRecordSource source)
     {

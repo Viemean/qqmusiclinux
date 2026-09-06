@@ -9,7 +9,6 @@ namespace QQMusic.Tui.Player;
 /// Linux MPRIS2 D-Bus 媒体播放器控制规范服务
 /// 基于系统原生 libgio-2.0.so.0 / libglib-2.0.so.0 P/Invoke 实现
 /// 允许 KDE Plasma、GNOME、锁屏小部件及多媒体物理键盘控制 TUI 音乐播放
-/// 零第三方托管依赖，100% Native AOT 兼容
 /// </summary>
 public sealed unsafe partial class MprisService : IDisposable
 {

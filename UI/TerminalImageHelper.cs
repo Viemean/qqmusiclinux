@@ -327,7 +327,7 @@ public static class TerminalImageHelper
     }
 
     /// <summary>
-    /// 获取单曲专属原画/超高清封面（针对未收录在传统专辑的独立单曲），优先拉取原画档与 1200 顶级分辨率档
+    /// 获取单曲封面，优先拉取高分辨率版本
     /// </summary>
     public static async Task<string?> EnsureSingleCoverAsync(string songMid, string vsMid)
     {
@@ -508,7 +508,7 @@ public static class TerminalImageHelper
     private static readonly LinkedList<(ImageCacheKey Key, byte[] Payload)> s_lruList = new();
 
     /// <summary>
-    /// 在终端指定行、列输出 Kitty 原生图像（f=100 PNG 格式分块传输），利用内存 LRU 缓存秒级复用
+    /// 在终端指定行、列输出 Kitty 原生图像（f=100 PNG 格式分块传输）
     /// </summary>
     /// <param name="filePath">本地图像文件绝对路径</param>
     /// <param name="col">屏幕 1-based 列坐标</param>
@@ -654,7 +654,7 @@ public static class TerminalImageHelper
     }
 
     /// <summary>
-    /// 清除终端中所有 Kitty 图像，杜绝残影
+    /// 清除终端中显示的 Kitty 图像
     /// </summary>
     public static void ClearImages()
     {

@@ -1,6 +1,5 @@
 /**
- * QQ Music Web - Electron 沉浸式风格客户端
- * 仿 QQ 音乐 Linux 原版沉浸播放页 + 移动端合体交互与 Android 状态公布
+ * QQ Music Web 客户端
  */
 
 class ElectronMusicPlayer {
@@ -77,7 +76,7 @@ class ElectronMusicPlayer {
   }
 
   bindEvents() {
-    // 1. 舞台点击交互：在桌面端（宽度 >= 820px 可显示歌词视窗大小）坚决禁止点击封面！
+    // 桌面端禁用点击封面
     const setMobileLyricsView = (show) => {
       if (show) {
         this.stageView.classList.add('show-lyrics');
@@ -121,7 +120,7 @@ class ElectronMusicPlayer {
       }
     });
 
-    // 封面加载完成时同步更新纯净莫奈背景 (0 摩尔纹)
+    // 封面加载完成时更新背景色
     this.albumCover.addEventListener('load', () => {
       this.stageView.classList.remove('no-cover');
       this.albumCover.classList.remove('error');
@@ -738,7 +737,7 @@ class ElectronMusicPlayer {
     const idx = this.state.activeLyricIndex;
     if (idx < 0) return;
 
-    // 1. 更新移动端居中歌词滚动 (局部容器滚动，杜绝整页偏左)
+    // 1. 更新移动端居中歌词滚动
     const mobileItems = this.mobileLyricsInner.querySelectorAll('.lyric-item');
     for (let i = 0; i < mobileItems.length; i++) {
       mobileItems[i].classList.toggle('active', i === idx);
@@ -797,8 +796,7 @@ class ElectronMusicPlayer {
       }
     });
 
-    // 严禁注册 seekbackward 与 seekforward，以符合 Google 现代 Web 音乐播放标准，
-    // 避免 Android 系统误判为语音播客从而剥夺通知栏底部原生拖拽进度条！
+    // 不注册 seekbackward 与 seekforward，避免被识别为语音播客
     safeSetHandler('seekbackward', null);
     safeSetHandler('seekforward', null);
   }
@@ -807,7 +805,7 @@ class ElectronMusicPlayer {
     if (!('mediaSession' in navigator) || !song) return;
     const mid = song.mid || song.id || '';
     const origin = window.location.origin;
-    // 使用带绝对路径和动态时间戳的 URL，彻底击穿 Android 系统对通知栏位图的强缓存
+    // 使用带绝对路径和动态时间戳的 URL
     const coverUrl = new URL(`/cover?mid=${encodeURIComponent(mid)}&t=${Date.now()}`, origin).href;
 
     try {
@@ -844,8 +842,7 @@ class ElectronMusicPlayer {
         // 确保与系统会话当前的播放/暂停状态对齐
         navigator.mediaSession.playbackState = this.state.isPlaying ? 'playing' : 'paused';
 
-        // 铁律：Android PlaybackStateCompat 明确要求 playbackRate 必须严格大于 0！
-        // 绝不允许传 0，否则系统底层直接抛出 IllegalArgumentException 并拒绝显示进度条！
+        // playbackRate 必须大于 0，否则系统底层抛出异常
         const rawRate = Number(this.audioElement.playbackRate);
         const rate = Number.isFinite(rawRate) && rawRate > 0 ? rawRate : 1.0;
 
@@ -938,7 +935,7 @@ class ElectronMusicPlayer {
         targetSat = bestBin.sSum / bestBin.count;
       }
 
-      // 纯净单色莫奈深色背景 (1:1 对标 Electron 原版参数: L: 20%, S: 22%~42%, 0 阶梯摩尔纹)
+      // 莫奈背景色彩计算
       const sPct = Math.min(Math.max(Math.round(targetSat * 70), 22), 42);
       const lPct = 20;
       return {

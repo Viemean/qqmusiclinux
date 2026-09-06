@@ -94,7 +94,7 @@ public sealed class LoginDialog : Dialog
 
         var webTitleLabel = new Label
         {
-            Text = "【手机 / 外部浏览器 协同扫码】",
+            Text = "网页扫码登录",
             X = 2,
             Y = 1
         };
@@ -102,7 +102,7 @@ public sealed class LoginDialog : Dialog
 
         var webDescLabel = new Label
         {
-            Text = "服务已全网卡绑定 (0.0.0.0)，支持手机/电脑浏览器直接扫码：",
+            Text = "在浏览器中打开以下任一地址完成扫码授权：",
             X = 2,
             Y = 3
         };
@@ -110,7 +110,7 @@ public sealed class LoginDialog : Dialog
 
         _webLanUrlLabel = new Label
         {
-            Text = "▶ 手机/局域网: 正在启动服务...",
+            Text = "局域网地址: 正在获取...",
             X = 2,
             Y = 5
         };
@@ -118,7 +118,7 @@ public sealed class LoginDialog : Dialog
 
         _webLocalUrlLabel = new Label
         {
-            Text = "▶ 本机回环地址: 正在启动服务...",
+            Text = "本机地址: 正在获取...",
             X = 2,
             Y = 7
         };
@@ -149,7 +149,7 @@ public sealed class LoginDialog : Dialog
 
         var webHelpLabel = new Label
         {
-            Text = "提示: 在手机/外部浏览器打开上方地址完成授权，终端将秒级自动同步。\n支持随时切换至 [终端扫码] 查看字符二维码，或 [Cookie 导入]。",
+            Text = "提示: 手机或外部设备在浏览器中打开上述地址完成扫码即可，终端会自动同步登录状态。\n如需直接在终端显示二维码，可切换至 [终端扫码]。",
             X = 2,
             Y = 16,
             Width = Dim.Fill(2)
@@ -310,14 +310,13 @@ public sealed class LoginDialog : Dialog
 
     private void StartQrLoginFlow()
     {
-        // 1. 无论终端是否支持图形，立即启动 0.0.0.0 Web 登录协同服务
         _httpServer ??= new LoginHttpServer();
         _httpServer.Start(null);
 
         Application.Invoke(() =>
         {
-            _webLanUrlLabel.Text = $"▶ 手机/局域网: {_httpServer.LanUrl}";
-            _webLocalUrlLabel.Text = $"▶ 本机访问: {_httpServer.LocalUrl}";
+            _webLanUrlLabel.Text = $"局域网: {_httpServer.LanUrl}";
+            _webLocalUrlLabel.Text = $"本机: {_httpServer.LocalUrl}";
         });
 
         Task.Run(async () =>
@@ -334,16 +333,15 @@ public sealed class LoginDialog : Dialog
                 return;
             }
 
-            // 更新二维码图像至 Web 服务
             _httpServer.UpdateQrCode(qr.PngBytes);
-            _httpServer.UpdateStatus("等待手机扫码...");
+            _httpServer.UpdateStatus("等待扫码...");
 
             Application.Invoke(() =>
             {
-                _webStatusLabel.Text = "状态: 等待手机扫码 (手机浏览器打开上方链接)...";
-                _qrStatusLabel.Text = "状态: 等待手机扫码...";
+                _webStatusLabel.Text = "状态: 等待扫码...";
+                _qrStatusLabel.Text = "状态: 等待扫码...";
                 _qrView.SetSource(new ObservableCollection<string>(qr.AsciiLines));
-                _qrTipLabel.Text = $"可手机直接扫码，或浏览器打开: {_httpServer.LanUrl}";
+                _qrTipLabel.Text = $"手机扫码或浏览器打开: {_httpServer.LanUrl}";
             });
 
             // 轮询登录状态

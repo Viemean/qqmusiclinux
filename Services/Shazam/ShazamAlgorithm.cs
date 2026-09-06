@@ -1,8 +1,8 @@
 namespace QQMusic.Tui.Services.Shazam;
 
 /// <summary>
-/// Apple Shazam 官方指纹提取核心算法 (C# 原生实现)
-/// 包含 2048 点 Hanning 窗、极速实数 FFT、时域与频域峰值扩展及局部最大值提取
+/// Shazam 音频指纹提取算法
+/// 包含 2048 点 Hanning 窗、实数 FFT、时域与频域峰值扩展及局部最大值提取
 /// </summary>
 public sealed class ShazamAlgorithm
 {
@@ -205,7 +205,7 @@ public sealed class ShazamAlgorithm
                 continue;
             }
 
-            // 确定为有效特征峰值！进行二次抛物线微调插值
+            // 确定为有效特征峰值，进行二次抛物线微调插值
             int fftPassNumber = _spreadNumWritten - 46;
 
             float valBefore = fftMinus46[binPosition - 1];

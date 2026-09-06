@@ -46,7 +46,7 @@ public sealed class SelectArtistDialog : Dialog
 
         if (inLyricArea)
         {
-            // 定位在右侧歌词区域水平中心，彻底避开左侧封面图层（封面占前 48% 宽度）
+            // 定位在右侧歌词区域水平中心，避开左侧封面图层
             X = Pos.Percent(74) - (dlgW / 2);
         }
         else

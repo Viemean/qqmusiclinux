@@ -7,15 +7,15 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <!-- 沉浸式纯净自适应莫奈深色背景 (单色平滑深色，0 摩尔纹) -->
+  <!-- 背景层 -->
   <div class="ambient-backdrop" id="ambientBackdrop"></div>
 
   <div class="electron-layout">
-    <!-- 上半部：主视窗 (桌面双栏：大封面+歌名对齐 vs 居中歌词；移动端单列：合体封面/歌词舞台) -->
+    <!-- 上半部：主视窗 -->
     <main class="player-body">
-      <!-- 左列：大封面与歌曲信息 -->
+      <!-- 左列：封面与歌曲信息 -->
       <section class="left-pane" id="leftPane">
-        <!-- 移动端合体舞台 (移动端点击切换封面/歌词，桌面端禁止点击) -->
+        <!-- 移动端舞台 (点击切换封面/歌词) -->
         <div class="stage-view-wrapper" id="stageView" title="封面与歌词">
           <!-- 封面容器 -->
           <div class="cover-box" id="coverContainer">
@@ -27,7 +27,7 @@
             </div>
           </div>
 
-          <!-- 移动端居中滚动歌词容器 -->
+          <!-- 移动端歌词容器 -->
           <div class="mobile-lyrics-container" id="mobileLyricsContainer">
             <div class="lyrics-scroll-inner" id="mobileLyricsInner">
               <div class="lyric-line-empty">正在加载歌词...</div>
@@ -35,12 +35,12 @@
           </div>
         </div>
 
-        <!-- 歌曲信息区 (桌面端严格左对齐到封面边缘；移动端点击此区域可切回大封面) -->
+        <!-- 歌曲信息区 -->
         <div class="track-meta" id="trackMeta" title="歌曲信息">
           <div class="track-title-row">
             <h1 id="trackTitle" class="track-title">等待播放</h1>
             <div class="track-right-actions">
-              <!-- 移动端歌词界面下：音质徽章显示在红心爱心左边 -->
+              <!-- 移动端歌词界面音质切换 -->
               <button id="lyricsQualityBadge" class="badge-quality badge-quality-lyrics quality-btn-sync" type="button" title="点击切换音质">SQ</button>
               <button id="btnLike" class="btn-icon-subtle btn-like" type="button" title="喜欢">
                 <svg class="heart-icon" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
@@ -53,7 +53,7 @@
         </div>
       </section>
 
-      <!-- 右列：桌面端沉浸式多行大歌词视窗 (居中对齐) -->
+      <!-- 右列：桌面端歌词视窗 -->
       <section class="right-pane desktop-lyrics-pane" id="desktopLyricsPane">
         <div class="desktop-lyrics-inner" id="desktopLyricsInner">
           <div class="lyric-line-empty desktop">该歌曲暂无歌词</div>
@@ -61,11 +61,11 @@
       </section>
     </main>
 
-    <!-- 下半部：全宽贯穿式底部控制栏 (1:1 对标 Electron 原版) -->
+    <!-- 下半部：底部控制栏 -->
     <footer class="player-footer">
-      <!-- 细长进度条区域 -->
+      <!-- 进度条区域 -->
       <div class="progress-zone">
-        <!-- 移动端默认封面状态下：音质徽章放置在进度条上方 -->
+        <!-- 移动端进度条上方音质切换 -->
         <div class="progress-top-row">
           <span class="progress-top-spacer"></span>
           <button id="mobileQualityBadge" class="badge-quality badge-quality-mobile quality-btn-sync" type="button" title="点击切换音质">SQ</button>
@@ -79,7 +79,7 @@
         </div>
       </div>
 
-      <!-- 横向控制工具栏 (移动端 5 个按钮严格对称，大白圆播放键绝对居中) -->
+      <!-- 控制工具栏 -->
       <div class="controls-toolbar">
         <div class="ctrl-left">
           <button id="btnFooterLike" class="btn-icon-ctrl btn-footer-like" type="button" title="喜欢">

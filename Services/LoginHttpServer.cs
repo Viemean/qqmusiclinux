@@ -6,7 +6,7 @@ using QQMusic.Tui.Utils;
 namespace QQMusic.Tui.Services;
 
 /// <summary>
-/// 终端无图形协议支持时的轻量扫码登录本地 HTTP 服务 (零反射，100% Native AOT 兼容)
+/// 扫码登录本地 HTTP 服务
 /// </summary>
 public sealed class LoginHttpServer : IDisposable
 {
@@ -27,9 +27,9 @@ public sealed class LoginHttpServer : IDisposable
     public bool IsRunning => _listener != null && !_isDisposed && (_cts?.IsCancellationRequested == false);
 
     /// <summary>
-    /// 启动本地轻量 HTTP 服务 (绑定 0.0.0.0，支持局域网直接扫码)
+    /// 启动本地 HTTP 服务
     /// </summary>
-    /// <param name="initialQrBytes">初始二维码 PNG 二进制字节流 (可为空，就绪后通过 UpdateQrCode 动态推入)</param>
+    /// <param name="initialQrBytes">初始二维码图像数据（可为空）</param>
     public bool Start(byte[]? initialQrBytes)
     {
         lock (_lock)
@@ -354,7 +354,7 @@ public sealed class LoginHttpServer : IDisposable
             <body>
               <div class="card">
                 <div class="logo-title">QQ音乐 终端版</div>
-                <div class="sub-title">网页协同扫码登录 (0.0.0.0 跨端直连)</div>
+                <div class="sub-title">扫码登录</div>
                 <div class="qr-container">
                   <div class="qr-loading" id="qrLoading">
                     <div class="spinner"></div>
@@ -363,8 +363,8 @@ public sealed class LoginHttpServer : IDisposable
                   <img class="qr-image" id="qrImage" src="/qr.png" alt="登录二维码" />
                 </div>
                 <div class="instruction" id="instruction">请使用手机 QQ 扫描二维码</div>
-                <div class="hint">手机扫码并授权后，终端与网页将自动同步完成登录。<br>登录成功后，此服务将自动退出并释放端口。</div>
-                <div class="success-badge" id="successBadge">🎉 登录成功，正在同步会话...</div>
+                <div class="hint">手机扫码并确认授权后将自动完成登录。</div>
+                <div class="success-badge" id="successBadge">登录成功，正在同步会话...</div>
               </div>
               <script>
                 const qrImage = document.getElementById('qrImage');
@@ -393,7 +393,7 @@ public sealed class LoginHttpServer : IDisposable
                     }
 
                     if (data.success) {
-                      successBadge.innerText = '🎉 登录成功 [' + (data.nick || 'QQ用户') + ']，终端已同步！';
+                      successBadge.innerText = '登录成功 [' + (data.nick || 'QQ用户') + ']，终端已同步';
                       successBadge.style.display = 'block';
                       instruction.style.color = '#31c27c';
                       return;

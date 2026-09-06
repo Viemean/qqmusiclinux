@@ -206,7 +206,7 @@ public sealed partial class MainWindow
 
         if (_isNowPlayingViewActive)
         {
-            // 在播放界面下：移动到右侧歌词视窗水平中心，彻底避开左侧大封面图层（占前 48% 宽度）
+            // 在播放界面下：移动到右侧歌词视窗水平中心，避开左侧封面图层
             dlg.X = Pos.Percent(74) - (dlgW / 2);
         }
         else

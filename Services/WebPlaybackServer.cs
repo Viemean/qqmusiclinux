@@ -9,7 +9,7 @@ using QQMusic.Tui.Utils;
 namespace QQMusic.Tui.Services;
 
 /// <summary>
-/// 轻量级零反射 Web 播放与协同控制服务 (100% Native AOT 兼容，基于裸 Socket 与 SSE)
+/// Web 播放与协同控制服务
 /// </summary>
 public sealed class WebPlaybackServer : IDisposable
 {

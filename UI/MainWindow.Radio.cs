@@ -29,7 +29,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        // 如果电台队列已就绪，且当前播放曲目属于电台队列，直接恢复电台并打开沉浸式播放界面
+        // 如果电台队列已就绪，且当前播放曲目属于电台队列，直接恢复电台并打开播放界面
         if (_radioQueue.Count > 0 && _radioIndex < _radioQueue.Count && _activeSong != null && _radioQueue.Any(s => s.Mid == _activeSong.Mid))
         {
             Application.Invoke(() =>
@@ -45,7 +45,7 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// 启动“猜你喜欢”个性化音乐电台（流模式）：进入即播放首曲，直接切入沉浸式大图歌词播放界面
+    /// 启动“猜你喜欢”个性化音乐电台
     /// </summary>
     private async Task StartGuessRadioAsync()
     {
@@ -90,7 +90,7 @@ public sealed partial class MainWindow
         _radioQueue.AddRange(songs);
         var firstSong = _radioQueue[0];
 
-        // 立即播放首曲并无缝呈现沉浸式播放大界面
+        // 播放首曲并打开播放界面
         await PlaySongAsync(firstSong);
         Application.Invoke(() =>
         {
@@ -150,7 +150,7 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// 后台静默预拉取电台歌曲，杜绝并发调用 API 冲突并去重追加
+    /// 后台预拉取电台歌曲，去重追加
     /// </summary>
     private async Task PrefetchNextRadioBatchAsync()
     {

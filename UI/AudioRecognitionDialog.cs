@@ -12,8 +12,8 @@ using Attribute = Terminal.Gui.Drawing.Attribute;
 namespace QQMusic.Tui.UI;
 
 /// <summary>
-/// 听歌识曲专用流式交互弹窗
-/// 支持系统内录与麦克风无缝切换、15秒渐进切片双引擎 (Shazam + ACRCloud) 并发流式识别
+/// 听歌识曲流式交互弹窗
+/// 支持系统内录与麦克风切换、多阶段流式识别
 /// </summary>
 public sealed class AudioRecognitionDialog : Dialog
 {
@@ -243,7 +243,7 @@ public sealed class AudioRecognitionDialog : Dialog
 
         if (_isRecognized)
         {
-            // 成功态：触发立即播放并彻底关闭
+            // 成功态：触发播放并关闭弹窗
             _isDismissed = true;
             var songToPlay = _recognizedSong;
             StopAllProcesses();
@@ -315,7 +315,7 @@ public sealed class AudioRecognitionDialog : Dialog
             const double totalSeconds = 15.0; // 调整为最大 15 秒
             const int intervalMs = 100;
 
-            // 5 级渐进累积切片检查时间点 (以 3.2 秒黄金特征长度首发极速探测，双引擎并发)
+            // 渐进累积切片检查时间点 (双引擎并发)
             double[] sliceCheckpoints = [3.2, 5.0, 7.5, 11.0, 15.0];
             bool[] checkedSlices = new bool[sliceCheckpoints.Length];
             int inflightRequests = 0;

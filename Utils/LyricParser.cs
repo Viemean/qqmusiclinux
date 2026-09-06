@@ -177,7 +177,7 @@ public static partial class LyricParser
 
             if (!isMeta && transItems.Count > 0)
             {
-                // 1. 毫秒级精确匹配 (< 80ms)
+                // 1. 精确匹配 (< 80ms)
                 var exact = transItems.Find(t => Math.Abs((t.Timestamp - orig.Timestamp).TotalMilliseconds) < 80);
                 if (exact.Text != null && !usedSet.Contains(exact) &&
                     exact.Text != "//" && !exact.Text.Contains("享有") && !exact.Text.Contains("大模型") && !exact.Text.Contains("翻译贡献"))

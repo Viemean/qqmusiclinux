@@ -319,7 +319,7 @@ public sealed partial class SongListView : FrameView
                 CheckTriggerLoadMore();
             }
 
-            // 用户要求：改成双击才进入歌手/专辑界面，单击用于常规选行以杜绝误触
+            // 双击进入歌手/专辑界面，单击选择当前行
             if (m.Position.HasValue && (m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonDoubleClicked)))
             {
                 var clickedRow = _listView.Viewport.Y + m.Position.Value.Y;

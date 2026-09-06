@@ -202,7 +202,7 @@ public sealed partial class MainWindow : Window
         };
         Add(_searchLabel);
 
-        // 顶部用户状态按钮：禁用可获焦属性，杜绝启动与轮转时被物理焦点抢占；通过鼠标点击与 F2 快捷键唤起
+        // 顶部用户状态按钮：通过点击或 F2 快捷键唤起
         _userStatusBtn = new Button
         {
             Text = GetUserStatusText(),
@@ -222,7 +222,7 @@ public sealed partial class MainWindow : Window
         _userStatusBtn.Accepting += (s, e) => ShowLoginDialog();
         Add(_userStatusBtn);
 
-        // 顶部听歌识曲按钮：独立位于账号按钮左侧 (留出 2 列安全间距)，杜绝物理重叠
+        // 顶部听歌识曲按钮：位于账号按钮左侧
         _recognizeBtn = new Button
         {
             Text = "识曲",
@@ -549,13 +549,13 @@ public sealed partial class MainWindow : Window
                 int lineIdx = _lyricItemToLineIndex[e.Row];
                 if (lineIdx == _currentActiveLyricIndex)
                 {
-                    // 当前播放句：原文与翻译同步高亮为翡翠绿
+                    // 当前播放句：高亮显示
                     e.RowAttribute = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenPrimary, Color.None);
                     return;
                 }
             }
 
-            // 其余未播放行与空行使用清润亮灰白
+            // 未播放行与空行样式
             e.RowAttribute = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqTextLyricDim, Color.None);
         };
         _lyricListView.MouseEvent += (s, m) =>
@@ -935,7 +935,7 @@ public sealed partial class MainWindow : Window
             _lastUserActivityTick = Environment.TickCount64;
             TriggerImmersiveActivity();
 
-            // 1. 若当前处于任何弹窗（Dialog/Modal）中，绝不拦截按键，全部交由弹窗处理
+            // 1. 若当前处于弹窗（Dialog/Modal）中，不拦截按键，交由弹窗处理
             if (Application.TopRunnableView != null && Application.TopRunnableView != this)
             {
                 return;
@@ -1259,7 +1259,7 @@ public sealed partial class MainWindow : Window
         });
         _songListView.SetFocusToList();
 
-        // 后台预热收藏曲目 ID 缓存，确保首次播放曲目即能精准呈现 [已收藏] / [收藏] 状态
+        // 后台预热收藏曲目 ID 缓存，用于更新收藏状态
         if (UserSession.Current.IsLoggedIn)
         {
             _ = Task.Run(async () =>
@@ -1302,7 +1302,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 精准计算文本的终端视觉宽度（考虑 CJK 宽字符占 2 列）
+    /// 计算文本的终端视觉宽度（考虑 CJK 宽字符占 2 列）
     /// </summary>
     private static int GetVisualWidth(string text)
     {

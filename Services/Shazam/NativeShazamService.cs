@@ -7,8 +7,7 @@ using System.Text.Json;
 namespace QQMusic.Tui.Services.Shazam;
 
 /// <summary>
-/// 纯 C# 原生 Apple Shazam 云端音频指纹识别客户端
-/// 彻底摆脱 Python 解释器与外部工具链，毫秒级指纹提取并直连苹果官方云端接口
+/// Shazam 音频指纹识别服务
 /// </summary>
 public static class NativeShazamService
 {
@@ -57,7 +56,7 @@ public static class NativeShazamService
     }
 
     /// <summary>
-    /// 纯内存识别 16000Hz 16-bit 单声道 PCM 样本 (0 磁盘 I/O，0 临时文件，极致性能)
+    /// 识别 16000Hz 16-bit 单声道 PCM 样本
     /// </summary>
     public static async Task<(bool Success, string Title, string Artist, string Album, string Error)> RecognizePcmSamplesAsync(
         ReadOnlyMemory<short> pcmSamples,
@@ -70,7 +69,7 @@ public static class NativeShazamService
 
         try
         {
-            // 毫秒级原生提取 Shazam 音频特征签名 (纯内存运算，< 5ms)
+            // 提取 Shazam 音频特征签名
             var sw = Stopwatch.StartNew();
             var sig = ShazamAlgorithm.CreateSignatureFromPcm(pcmSamples.Span);
             var uri = sig.EncodeToUri();

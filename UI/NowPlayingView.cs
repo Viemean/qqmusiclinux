@@ -18,9 +18,9 @@ using Rectangle = System.Drawing.Rectangle;
 namespace QQMusic.Tui.UI;
 
 /// <summary>
-/// 类似 Electron 客户端风格的沉浸式全屏播放界面
-/// 左侧：高清专辑原图（Kitty 原生图形协议微圆角）+ 封面严格左对齐的歌曲信息（歌手-歌曲名字、专辑）
-/// 右侧：大视窗自动折行居中同步歌词
+/// 全屏播放界面
+/// 左侧：专辑图与歌曲信息（歌手、歌曲名、专辑）
+/// 右侧：居中同步歌词
 /// </summary>
 public sealed class NowPlayingView : View
 {
@@ -931,7 +931,7 @@ public sealed class NowPlayingView : View
                     }
                 }
 
-                // 2. 交互项目聚焦高亮 3 秒无操作自动淡出隐藏（满足沉浸式纯净视觉体验）
+                // 2. 交互项高亮 3 秒无操作自动隐藏
                 if (!_isInteractiveHighlightSuppressed &&
                     _lastInteractiveActivityTick > 0 &&
                     now - _lastInteractiveActivityTick > 3000)

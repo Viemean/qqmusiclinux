@@ -5,8 +5,7 @@ using QQMusic.Tui.Utils;
 namespace QQMusic.Tui.Models;
 
 /// <summary>
-/// 本地持久化“最近播放”历史管理器
-/// 遵循 .NET 10 Native AOT 零反射规范，采用 JsonDocument 解析与手动序列化
+/// 本地“最近播放”历史记录管理器，采用 JsonDocument 解析与手动序列化
 /// </summary>
 public static class RecentPlayHistory
 {

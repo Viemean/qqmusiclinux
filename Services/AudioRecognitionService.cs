@@ -134,7 +134,7 @@ public static class AudioRecognitionService
 
     private static async Task<RecognitionResult> MatchWithQqMusicAsync(string title, string artist, string album)
     {
-        // 1. 构建多梯队精准检索词 (提取声优、净化角色名、专辑组合)
+        // 1. 构建检索词 (提取声优、角色名、专辑组合)
         var searchQueries = BuildSearchQueries(title, artist, album);
         List<Song>? searchSongs = null;
 
@@ -245,7 +245,7 @@ public static class AudioRecognitionService
             // 歌手匹配 (包括 CV 声优名、净化歌手名、原歌手名)
             if (!string.IsNullOrWhiteSpace(cvName) && song.Artist.Contains(cvName, StringComparison.OrdinalIgnoreCase))
             {
-                score += 50; // 声优精准命中！
+                score += 50; // 声优匹配
             }
             else if (!string.IsNullOrWhiteSpace(cleanArtist) && song.Artist.Contains(cleanArtist, StringComparison.OrdinalIgnoreCase))
             {
@@ -277,8 +277,7 @@ public static class AudioRecognitionService
             }
         }
 
-        // 核心安全红线：必须至少在歌手或专辑上有真实吻合 (score >= 65)，才允许匹配；
-        // 杜绝只有歌名相似但歌手完全无关的同名翻唱强行套用！
+        // 歌手或专辑需要有匹配度 (score >= 65)，才允许匹配；避免同名翻唱误匹配
         if (maxScore >= 65)
         {
             return bestSong;

@@ -95,7 +95,7 @@ public sealed partial class GstPlayer : IPlayer
             if (startPosition > 0.5)
             {
                 var seekNs = (long)(startPosition * 1_000_000_000.0);
-                // 异步给管线 50ms 准备时间再精准定位
+                // 异步延迟后再定位播放位置
                 _ = Task.Run(async () =>
                 {
                     await Task.Delay(60);

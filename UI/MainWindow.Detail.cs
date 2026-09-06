@@ -90,7 +90,7 @@ public sealed partial class MainWindow
         var singers = ExtractArtistsFromSong(song);
         if (singers.Count > 1)
         {
-            // 在当前播放界面的右侧歌词区域弹出多歌手选择窗口，彻底避开左侧封面硬件图层
+            // 在播放界面的右侧歌词区域弹出多歌手选择窗口，避开左侧封面图层
             var dlg = new SelectArtistDialog(singers, inLyricArea: true);
             Application.Run(dlg);
             if (dlg.SelectedArtist != null)
@@ -652,7 +652,7 @@ public sealed partial class MainWindow
 
         if (snapshot.ViewMode == ViewMode.ArtistDetail)
         {
-            // 恢复歌手主页上下文，绝不能切成歌词
+            // 恢复歌手主页上下文，不切换到歌词
             _currentSingerMid = snapshot.SingerMid ?? "";
             _currentSingerName = snapshot.SingerName ?? "";
             _currentSingerDetail = snapshot.SingerDetail;
