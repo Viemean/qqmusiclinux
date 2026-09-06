@@ -18,7 +18,7 @@
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <IlcFoldIdenticalMethodBodies>true</IlcFoldIdenticalMethodBodies>
     <DefaultItemExcludes>$(DefaultItemExcludes);tui/**</DefaultItemExcludes>
-    <LinkerFlavor Condition="'$(RuntimeIdentifier)' == 'linux-arm64' or '$(RuntimeIdentifier)' == 'linux-musl-arm64'">lld</LinkerFlavor>
+    <LinkerFlavor Condition="'$(RuntimeIdentifier)' == 'linux-arm64'">lld</LinkerFlavor>
   </PropertyGroup>
 
   <ItemGroup>
