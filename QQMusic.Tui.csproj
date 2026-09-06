@@ -26,7 +26,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="www/**" CopyToOutputDirectory="PreserveNewest" />
+    <EmbeddedResource Include="www/**" />
+    <None Update="www/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

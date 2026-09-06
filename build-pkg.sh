@@ -26,9 +26,9 @@ mkdir -p "$STAGE_DIR/usr/bin"
 cp "$BIN_PATH" "$STAGE_DIR/usr/bin/qqmusic-tui"
 chmod 755 "$STAGE_DIR/usr/bin/qqmusic-tui"
 
-if [ -d "bin/Release/net10.0/${RID}/publish/www" ]; then
+if [ -d "www" ]; then
     mkdir -p "$STAGE_DIR/usr/share/qqmusic-tui/www"
-    cp -r "bin/Release/net10.0/${RID}/publish/www/"* "$STAGE_DIR/usr/share/qqmusic-tui/www/"
+    cp -r www/* "$STAGE_DIR/usr/share/qqmusic-tui/www/"
 fi
 
 # 计算已安装文件总大小（字节）

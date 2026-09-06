@@ -264,62 +264,7 @@ public sealed class LoginHttpServer : IDisposable
 
     private static string LoadHtmlPage()
     {
-        var filePath = ResolveWwwFilePath("login.html");
-        if (filePath != null)
-        {
-            try
-            {
-                return File.ReadAllText(filePath, Encoding.UTF8);
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error("LoginHttpServer", "Failed to read www/login.html", ex);
-            }
-        }
-
-        // 极简 fallback 页面
-        return """
-            <!DOCTYPE html>
-            <html lang="zh-CN">
-            <head><meta charset="UTF-8"><title>QQ音乐扫码登录</title><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-            <body style="background:#121212;color:#eee;text-align:center;padding:2rem;font-family:sans-serif;">
-              <h2>QQ音乐 扫码登录</h2>
-              <p><img id="qr" src="/qr.png" style="width:220px;height:220px;background:#fff;border-radius:8px;"></p>
-              <p id="msg" style="color:#aaa;">正在加载二维码...</p>
-              <button onclick="fetch('/refresh',{method:'POST'})" style="background:#31c27c;color:#fff;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">刷新二维码</button>
-              <script>
-                let v = -1;
-                setInterval(async () => {
-                  try {
-                    const r = await fetch('/status');
-                    const d = await r.json();
-                    if (d.status) document.getElementById('msg').innerText = d.status;
-                    if (d.ready && d.version !== v) {
-                      v = d.version;
-                      document.getElementById('qr').src = '/qr.png?v=' + d.version + '&t=' + Date.now();
-                    }
-                  } catch(e){}
-                }, 1500);
-              </script>
-            </body>
-            </html>
-            """;
-    }
-
-    private static string? ResolveWwwFilePath(string fileName)
-    {
-        var baseDir = AppContext.BaseDirectory;
-        var p1 = Path.Combine(baseDir, "www", fileName);
-        if (File.Exists(p1)) return p1;
-
-        var curDir = Directory.GetCurrentDirectory();
-        var p2 = Path.Combine(curDir, "www", fileName);
-        if (File.Exists(p2)) return p2;
-
-        var p3 = Path.Combine("/usr/share/qqmusic-tui/www", fileName);
-        if (File.Exists(p3)) return p3;
-
-        return null;
+        return StaticResourceHelper.LoadStaticText("login.html");
     }
 
     /// <summary>

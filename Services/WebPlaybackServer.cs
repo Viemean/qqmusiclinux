@@ -237,26 +237,17 @@ public sealed class WebPlaybackServer : IDisposable
             {
                 if (path == "/" || path == "/index.html")
                 {
-                    var filePath = GetStaticFilePath("index.html");
-                    string html = !string.IsNullOrEmpty(filePath) && File.Exists(filePath)
-                        ? await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false)
-                        : GetFallbackHtml();
+                    string html = StaticResourceHelper.LoadStaticText("index.html");
                     await SendResponseAsync(stream, 200, "OK", "text/html; charset=utf-8", html, ct).ConfigureAwait(false);
                 }
                 else if (path == "/style.css")
                 {
-                    var filePath = GetStaticFilePath("style.css");
-                    string css = !string.IsNullOrEmpty(filePath) && File.Exists(filePath)
-                        ? await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false)
-                        : GetFallbackCss();
+                    string css = StaticResourceHelper.LoadStaticText("style.css");
                     await SendResponseAsync(stream, 200, "OK", "text/css; charset=utf-8", css, ct).ConfigureAwait(false);
                 }
                 else if (path == "/app.js")
                 {
-                    var filePath = GetStaticFilePath("app.js");
-                    string js = !string.IsNullOrEmpty(filePath) && File.Exists(filePath)
-                        ? await File.ReadAllTextAsync(filePath, ct).ConfigureAwait(false)
-                        : GetFallbackJs();
+                    string js = StaticResourceHelper.LoadStaticText("app.js");
                     await SendResponseAsync(stream, 200, "OK", "application/javascript; charset=utf-8", js, ct).ConfigureAwait(false);
                 }
                 else if (path == "/cover")
@@ -802,78 +793,7 @@ public sealed class WebPlaybackServer : IDisposable
         await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
-    private static string GetStaticFilePath(string fileName)
-    {
-        var baseDir = AppContext.BaseDirectory;
-        var p1 = Path.Combine(baseDir, "www", fileName);
-        if (File.Exists(p1)) return p1;
 
-        var curDir = Directory.GetCurrentDirectory();
-        var p2 = Path.Combine(curDir, "www", fileName);
-        if (File.Exists(p2)) return p2;
-
-        var p3 = Path.Combine("/usr/share/qqmusic-tui/www", fileName);
-        if (File.Exists(p3)) return p3;
-
-        return "";
-    }
-
-    private static string GetFallbackHtml() => """
-        <!DOCTYPE html>
-        <html lang="zh-CN">
-        <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>QQ Music Web</title><link rel="stylesheet" href="/style.css"></head>
-        <body>
-          <div class="player-container">
-            <header class="player-header"><div class="brand"><span class="status-dot" id="statusDot"></span><span class="brand-title">QQ MUSIC</span></div><button id="btnAudioToggle" class="btn-audio"><span>🔊</span><span id="audioText">网页音频: 开启</span></button></header>
-            <main class="player-main">
-              <div class="cover-wrapper"><img id="albumCover" class="album-cover" src="/cover" alt="专辑封面"><div class="cover-fallback"><span>🎵</span></div></div>
-              <div class="track-info"><h1 id="trackTitle" class="track-title">等待播放</h1><p id="trackArtist" class="track-artist">QQ Music TUI</p></div>
-              <div class="lyric-wrapper"><p id="lyricCurrent" class="lyric-line">暂无歌词</p></div>
-              <div class="progress-section"><div class="progress-bar-container" id="progressContainer"><div class="progress-bar-fill" id="progressFill"></div></div><div class="time-labels"><span id="timeCurrent">00:00</span><span id="timeTotal">00:00</span></div></div>
-              <div class="controls-section"><button id="btnPrev" class="ctrl-btn">⏮</button><button id="btnPlay" class="ctrl-btn btn-play"><span id="playIcon">▶</span><span id="pauseIcon" style="display:none">⏸</span></button><button id="btnNext" class="ctrl-btn">⏭</button></div>
-            </main>
-          </div>
-          <audio id="audioElement" preload="auto"></audio>
-          <script src="/app.js?v=20260906_4" type="module"></script>
-        </body>
-        </html>
-        """;
-
-    private static string GetFallbackCss() => """
-        :root{--bg:#0b0f14;--text:#f3f4f6;--sec:#9ca3af;--accent:#10b981;}
-        *{box-sizing:border-box;margin:0;padding:0;}
-        body{background:var(--bg);color:var(--text);font-family:sans-serif;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:16px;}
-        .player-container{width:100%;max-width:400px;display:flex;flex-direction:column;gap:18px;}
-        .player-header{display:flex;justify-content:space-between;align-items:center;}
-        .brand{display:flex;align-items:center;gap:8px;font-weight:bold;color:var(--accent);}
-        .status-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);}
-        .status-dot.offline{background:#ef4444;}
-        .btn-audio{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.1);color:var(--sec);padding:4px 10px;border-radius:16px;cursor:pointer;}
-        .player-main{display:flex;flex-direction:column;align-items:center;gap:16px;}
-        .cover-wrapper{width:260px;height:260px;border-radius:16px;overflow:hidden;background:#181d24;display:flex;justify-content:center;align-items:center;}
-        .album-cover{width:100%;height:100%;object-fit:cover;}
-        .album-cover.error{display:none;}
-        .cover-fallback{display:none;font-size:48px;}
-        .cover-wrapper.no-cover .cover-fallback{display:block;}
-        .track-info{text-align:center;}
-        .track-title{font-size:1.2rem;margin-bottom:4px;}
-        .track-artist{font-size:0.9rem;color:var(--sec);}
-        .lyric-wrapper{min-height:36px;color:var(--accent);text-align:center;}
-        .progress-section{width:100%;display:flex;flex-direction:column;gap:6px;}
-        .progress-bar-container{height:6px;background:rgba(255,255,255,0.15);border-radius:3px;cursor:pointer;}
-        .progress-bar-fill{height:100%;background:var(--accent);width:0%;border-radius:3px;}
-        .time-labels{display:flex;justify-content:space-between;font-size:0.75rem;color:var(--sec);}
-        .controls-section{display:flex;gap:20px;align-items:center;}
-        .ctrl-btn{background:none;border:none;color:var(--text);font-size:24px;cursor:pointer;}
-        .btn-play{width:56px;height:56px;border-radius:50%;background:var(--accent);color:#000;display:flex;align-items:center;justify-content:center;}
-        """;
-
-    private static string GetFallbackJs() => """
-        const sse=new EventSource('/api/events');
-        sse.onmessage=e=>{try{const d=JSON.parse(e.data);if(d.song){document.getElementById('trackTitle').textContent=d.song.title;document.getElementById('trackArtist').textContent=d.song.artist;document.getElementById('albumCover').src='/cover?t='+Date.now();}}catch{}};
-        document.getElementById('btnPlay').onclick=()=>fetch('/api/toggle',{method:'POST'});
-        document.getElementById('btnPrev').onclick=()=>fetch('/api/previous',{method:'POST'});
-        """;
 
     public void Stop()
     {
