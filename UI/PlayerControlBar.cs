@@ -280,7 +280,7 @@ public sealed partial class PlayerControlBar : FrameView
         _progressLabel.SetScheme(MikuTheme.PlayerBar);
         _progressLabel.MouseEvent += (s, m) =>
         {
-            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked))
             {
                 if (m.Position.HasValue)
                 {

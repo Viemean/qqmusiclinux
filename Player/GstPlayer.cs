@@ -13,7 +13,7 @@ public sealed partial class GstPlayer : IPlayer
     private const int GST_STATE_PAUSED = 3;
     private const int GST_STATE_PLAYING = 4;
     private const int GST_FORMAT_TIME = 3;
-    private const int GST_SEEK_FLAGS = 1 | 4; // GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT
+    private const int GST_SEEK_FLAGS = 1 | 2; // GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE
 
     private const int GST_MESSAGE_EOS = 1;
     private const int GST_MESSAGE_ERROR = 2;
@@ -23,6 +23,8 @@ public sealed partial class GstPlayer : IPlayer
     private readonly Lock _lock = new();
     private bool _disposed;
     private bool _playbackFinishedTriggered;
+    private double _lastSeekTarget = -1;
+    private long _lastSeekTimestamp;
 
     private string? _currentPlayUrl;
     private double _lastHealthyPosition;
@@ -199,7 +201,16 @@ public sealed partial class GstPlayer : IPlayer
         {
             if (_disposed || _pipeline == 0) return Task.CompletedTask;
 
-            CurrentPositionSeconds = Math.Clamp(seconds, 0, TotalDurationSeconds > 0 ? TotalDurationSeconds : 3600);
+            var target = Math.Clamp(seconds, 0, TotalDurationSeconds > 0 ? TotalDurationSeconds : 3600);
+            // 防抖与重复定位抑制：忽略 200ms 内针对同一时间位置（差值小于 0.2s）的连续重复 Seek，防止音频回声
+            if (Math.Abs(target - _lastSeekTarget) < 0.2 && Environment.TickCount64 - _lastSeekTimestamp < 200)
+            {
+                return Task.CompletedTask;
+            }
+            _lastSeekTarget = target;
+            _lastSeekTimestamp = Environment.TickCount64;
+
+            CurrentPositionSeconds = target;
             _lastHealthyPosition = CurrentPositionSeconds;
             _watchdogStallCount = 0;
             if (TotalDurationSeconds > 0 && CurrentPositionSeconds < TotalDurationSeconds - 1.0)
