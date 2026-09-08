@@ -39,9 +39,10 @@ public sealed partial class MainWindow
 
     private void ShowQualityDialog()
     {
-        if (_activeSong != null && _activeSong.IsLocal)
+        if (_activeSong != null && (_activeSong.IsLocal || _activeSong.IsWebDav))
         {
-            _controlBar.UpdateStatus($"[本地音乐] 当前为本地音频规格 ({_activeSong.Quality})，无需切换在线音质");
+            var prefix = _activeSong.IsWebDav ? "WebDAV" : "本地音乐";
+            _controlBar.UpdateStatus($"[{prefix}] 当前为自托管/外部音频规格 ({_activeSong.Quality})，无需切换在线音质");
             return;
         }
 

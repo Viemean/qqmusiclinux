@@ -617,6 +617,11 @@ public sealed partial class MainWindow
 
     private async Task CycleQualityTierAsync(bool allowHiRes = false)
     {
+        if (_activeSong != null && (_activeSong.IsLocal || _activeSong.IsWebDav))
+        {
+            return;
+        }
+
         // 循环切换音质：Web 端跳过 Hi-Res（Standard -> HQ -> SQ -> Standard）
         var nextTier = _preferredQualityTier switch
         {
@@ -634,7 +639,7 @@ public sealed partial class MainWindow
         UserSession.Current.PreferredQuality = AudioQualityHelper.GetBadge(newTier);
         UserSession.Current.Save();
 
-        if (_activeSong != null && !_activeSong.IsLocal)
+        if (_activeSong != null && !_activeSong.IsLocal && !_activeSong.IsWebDav)
         {
             double currentPos = _isTuiAudioDisabled ? _webVirtualPosition : _player.CurrentPositionSeconds;
             var (url, quality, actualTier) = await QqMusicApi.GetPlayUrlForTierAsync(_activeSong.Mid, _activeSong.EffectiveMediaMid, newTier);
