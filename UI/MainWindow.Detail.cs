@@ -50,7 +50,7 @@ public sealed partial class MainWindow
     {
         if (song.IsLocal || song.IsWebDav)
         {
-            _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目暂不支持查看在线歌手主页");
+            _controlBar.UpdateStatus("本地/WebDAV 曲目暂不支持查看在线歌手主页");
             return;
         }
 
@@ -83,7 +83,7 @@ public sealed partial class MainWindow
     {
         if (song.IsLocal || song.IsWebDav)
         {
-            _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目暂不支持查看在线歌手主页");
+            _controlBar.UpdateStatus("本地/WebDAV 曲目暂不支持查看在线歌手主页");
             return;
         }
 
@@ -128,7 +128,7 @@ public sealed partial class MainWindow
     {
         if (song.IsLocal || song.IsWebDav)
         {
-            _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目暂不支持查看在线专辑主页");
+            _controlBar.UpdateStatus("本地/WebDAV 曲目暂不支持查看在线专辑主页");
             return;
         }
 
@@ -746,7 +746,7 @@ public sealed partial class MainWindow
 
         if (song.IsLocal || song.IsWebDav)
         {
-            _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目不支持分享");
+            _controlBar.UpdateStatus("本地/WebDAV 曲目不支持分享");
             return;
         }
 

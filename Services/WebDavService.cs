@@ -31,10 +31,7 @@ public static class WebDavService
         ".config", "qqmusic-tui"
     );
     private static readonly string s_configFile = Path.Combine(s_configDir, "webdav.json");
-    private static readonly string s_cacheDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".cache", "qqmusic-tui", "webdav"
-    );
+    private static readonly string s_cacheDir = CacheManager.WebDavDir;
 
     private static readonly HashSet<string> s_supportedAudioExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -428,6 +425,7 @@ public static class WebDavService
                 if (!string.IsNullOrWhiteSpace(lrcContent))
                 {
                     await File.WriteAllTextAsync(localLrcPath, lrcContent, Encoding.UTF8);
+                    CacheManager.RecordAccess($"webdav/{Path.GetFileName(localLrcPath)}", new FileInfo(localLrcPath).Length);
                 }
             }
         }
@@ -470,19 +468,25 @@ public static class WebDavService
         }
     }
 
-    public static async Task<string?> GetOrDownloadAudioAsync(WebDavServer server, string fileHref, Action<string>? progress = null)
+    public static async Task<string?> GetOrDownloadAudioAsync(WebDavServer server, string fileHref, Action<string>? progress = null, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(fileHref)) return null;
+        if (cancellationToken.IsCancellationRequested) return null;
 
         var localPath = GetLocalCachePath(server, fileHref);
 
         // 若本地完整缓存已存在且大于 4KB，秒开命中
-        if (File.Exists(localPath) && new FileInfo(localPath).Length > 4096)
+        if (File.Exists(localPath))
         {
-            return localPath;
+            var existingFi = new FileInfo(localPath);
+            if (existingFi.Length > 4096)
+            {
+                CacheManager.RecordAccess($"webdav/{Path.GetFileName(localPath)}", existingFi.Length);
+                return localPath;
+            }
         }
 
-        return await s_inFlightDownloads.GetOrAdd(localPath, async _ =>
+        var downloadTask = s_inFlightDownloads.GetOrAdd(localPath, _ => Task.Run(async () =>
         {
             var tmpPath = localPath + $".{Environment.TickCount64}.tmp";
             try
@@ -490,8 +494,9 @@ public static class WebDavService
                 var client = GetHttpClient(server);
                 var uri = BuildFullUri(server, fileHref);
 
+                if (cancellationToken.IsCancellationRequested) return null;
                 progress?.Invoke("正在连接 WebDAV 缓冲音频流...");
-                using var resp = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
+                using var resp = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (!resp.IsSuccessStatusCode)
                 {
                     AppLogger.Warn("WebDavService", $"Failed to download audio {uri}: {resp.StatusCode}");
@@ -499,7 +504,7 @@ public static class WebDavService
                 }
 
                 var totalBytes = resp.Content.Headers.ContentLength ?? -1L;
-                using var remoteStream = await resp.Content.ReadAsStreamAsync();
+                using var remoteStream = await resp.Content.ReadAsStreamAsync(cancellationToken);
                 using var fileStream = new FileStream(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024);
 
                 byte[] buffer = new byte[64 * 1024];
@@ -507,14 +512,15 @@ public static class WebDavService
                 int read;
                 var lastProgressTick = Environment.TickCount64;
 
-                while ((read = await remoteStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                while ((read = await remoteStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
                 {
-                    await fileStream.WriteAsync(buffer.AsMemory(0, read));
+                    await fileStream.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
                     downloaded += read;
 
                     if (Environment.TickCount64 - lastProgressTick > 250)
                     {
                         lastProgressTick = Environment.TickCount64;
+                        if (cancellationToken.IsCancellationRequested) break;
                         if (totalBytes > 0)
                         {
                             int pct = (int)((downloaded * 100) / totalBytes);
@@ -527,7 +533,8 @@ public static class WebDavService
                     }
                 }
 
-                fileStream.Flush();
+                cancellationToken.ThrowIfCancellationRequested();
+                await fileStream.FlushAsync(cancellationToken);
                 fileStream.Dispose();
 
                 if (File.Exists(localPath))
@@ -536,10 +543,20 @@ public static class WebDavService
                 }
                 File.Move(tmpPath, localPath);
 
+                var downloadedFi = new FileInfo(localPath);
+                CacheManager.RecordAccess($"webdav/{Path.GetFileName(localPath)}", downloadedFi.Length);
+                CacheManager.EnforceLimitAsync();
+
                 // 尝试用 ATL.NET 补充解析标签并缓存
                 TryUpdateCacheMetadata(server, fileHref, localPath);
 
                 return localPath;
+            }
+            catch (OperationCanceledException)
+            {
+                AppLogger.Info("WebDavService", $"Download audio canceled: {fileHref}");
+                try { if (File.Exists(tmpPath)) File.Delete(tmpPath); } catch {}
+                return null;
             }
             catch (Exception ex)
             {
@@ -551,7 +568,16 @@ public static class WebDavService
             {
                 s_inFlightDownloads.TryRemove(localPath, out Task<string?>? _);
             }
-        });
+        }, cancellationToken));
+
+        try
+        {
+            return await downloadTask.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     public static void TryUpdateCacheMetadata(

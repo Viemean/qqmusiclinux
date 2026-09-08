@@ -36,6 +36,9 @@ public sealed class ShazamAlgorithm
     private readonly float[] _re = new float[WindowSize];
     private readonly float[] _im = new float[WindowSize];
 
+    // DoPeakSpreading 复用缓存，避免每帧堆分配
+    private readonly float[] _spreadNew = new float[HalfWindow];
+
     public ShazamAlgorithm()
     {
         for (int i = 0; i < HistoryBufferSize; i++)
@@ -121,16 +124,14 @@ public sealed class ShazamAlgorithm
 
     private void DoPeakSpreading(float[] originLastFft)
     {
-        var spreadNew = new float[HalfWindow];
-
-        // 频域局部极大值扩展 (宽度 3)
+        // 频域局部极大值扩展 (宽度 3)，复用实例字段避免堆分配
         for (int i = 0; i < HalfWindow - 3; i++)
         {
-            spreadNew[i] = Math.Max(originLastFft[i], Math.Max(originLastFft[i + 1], originLastFft[i + 2]));
+            _spreadNew[i] = Math.Max(originLastFft[i], Math.Max(originLastFft[i + 1], originLastFft[i + 2]));
         }
         for (int i = HalfWindow - 3; i < HalfWindow; i++)
         {
-            spreadNew[i] = originLastFft[i];
+            _spreadNew[i] = originLastFft[i];
         }
 
         int i1 = (_spreadPos - 1 + HistoryBufferSize) % HistoryBufferSize;
@@ -144,14 +145,14 @@ public sealed class ShazamAlgorithm
         // 时域向后级联更新历史极大值包络
         for (int k = 0; k < HalfWindow; k++)
         {
-            float o = spreadNew[k];
+            float o = _spreadNew[k];
             s1[k] = Math.Max(s1[k], o);
             s2[k] = Math.Max(s2[k], s1[k]);
             s3[k] = Math.Max(s3[k], s2[k]);
         }
 
         // 保存当前扩展帧到环形缓冲
-        Array.Copy(spreadNew, _spreadFftOutputs[_spreadPos], HalfWindow);
+        Array.Copy(_spreadNew, _spreadFftOutputs[_spreadPos], HalfWindow);
 
         _spreadPos = (_spreadPos + 1) % HistoryBufferSize;
         _spreadNumWritten++;

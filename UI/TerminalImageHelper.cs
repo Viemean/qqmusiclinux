@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using QQMusic.Tui.Api;
 using QQMusic.Tui.Models;
+using QQMusic.Tui.Services;
 using QQMusic.Tui.Utils;
 
 namespace QQMusic.Tui.UI;
@@ -17,7 +18,7 @@ namespace QQMusic.Tui.UI;
 public static class TerminalImageHelper
 {
     private static readonly HttpClient s_httpClient = new();
-    private static readonly string s_cacheDir = Path.Combine(Path.GetTempPath(), "qqmusic-tui", "covers");
+    private static readonly string s_cacheDir = CacheManager.CoversDir;
     private static bool? s_isImageSupported;
 
     static TerminalImageHelper()
@@ -199,8 +200,10 @@ public static class TerminalImageHelper
         var pngFile = Path.Combine(s_cacheDir, $"{albumMid}.png");
         if (File.Exists(pngFile))
         {
-            if (IsValidPngFile(pngFile))
+            var fi = new FileInfo(pngFile);
+            if (fi.Length <= 2500 * 1024 && IsValidPngFile(pngFile))
             {
+                CacheManager.RecordAccess($"covers/{Path.GetFileName(pngFile)}", fi.Length);
                 return pngFile;
             }
             try { File.Delete(pngFile); } catch {}
@@ -248,6 +251,11 @@ public static class TerminalImageHelper
 
         // 应用平滑 6px 圆角遮罩处理（无外扩阴影）
         var processed = await ApplyRoundedCornersAsync(localFile, pngFile);
+        if (!string.IsNullOrEmpty(processed) && File.Exists(processed))
+        {
+            CacheManager.RecordAccess($"covers/{Path.GetFileName(processed)}", new FileInfo(processed).Length);
+            CacheManager.EnforceLimitAsync();
+        }
         return processed ?? localFile;
     }
 
@@ -262,14 +270,23 @@ public static class TerminalImageHelper
         var pngFile = Path.Combine(s_cacheDir, $"local_{cacheKey}.png");
         if (File.Exists(pngFile))
         {
-            if (IsValidPngFile(pngFile))
+            var fi = new FileInfo(pngFile);
+            if (fi.Length > 2500 * 1024 || !IsValidPngFile(pngFile))
+            {
+                try { File.Delete(pngFile); } catch {}
+            }
+            else
             {
                 return pngFile;
             }
-            try { File.Delete(pngFile); } catch {}
         }
 
         var processed = await ApplyRoundedCornersAsync(localRawImagePath, pngFile);
+        if (!string.IsNullOrEmpty(processed) && File.Exists(processed))
+        {
+            CacheManager.RecordAccess($"covers/{Path.GetFileName(processed)}", new FileInfo(processed).Length);
+            CacheManager.EnforceLimitAsync();
+        }
         return processed ?? localRawImagePath;
     }
 
@@ -283,8 +300,10 @@ public static class TerminalImageHelper
         var pngFile = Path.Combine(s_cacheDir, $"singer_{singerMid}.png");
         if (File.Exists(pngFile))
         {
-            if (IsValidPngFile(pngFile))
+            var fi = new FileInfo(pngFile);
+            if (fi.Length <= 2500 * 1024 && IsValidPngFile(pngFile))
             {
+                CacheManager.RecordAccess($"covers/{Path.GetFileName(pngFile)}", fi.Length);
                 return pngFile;
             }
             try { File.Delete(pngFile); } catch {}
@@ -323,6 +342,11 @@ public static class TerminalImageHelper
         }
 
         var processed = await ApplyRoundedCornersAsync(localFile, pngFile);
+        if (!string.IsNullOrEmpty(processed) && File.Exists(processed))
+        {
+            CacheManager.RecordAccess($"covers/{Path.GetFileName(processed)}", new FileInfo(processed).Length);
+            CacheManager.EnforceLimitAsync();
+        }
         return processed ?? localFile;
     }
 
@@ -336,8 +360,10 @@ public static class TerminalImageHelper
         var pngFile = Path.Combine(s_cacheDir, $"single_{songMid}.png");
         if (File.Exists(pngFile))
         {
-            if (IsValidPngFile(pngFile))
+            var fi = new FileInfo(pngFile);
+            if (fi.Length <= 2500 * 1024 && IsValidPngFile(pngFile))
             {
+                CacheManager.RecordAccess($"covers/{Path.GetFileName(pngFile)}", fi.Length);
                 return pngFile;
             }
             try { File.Delete(pngFile); } catch {}
@@ -436,6 +462,8 @@ public static class TerminalImageHelper
         return null;
     }
 
+    private const int MaxCoverDimension = 1000;
+
     private static async Task<string?> ApplyRoundedCornersAsync(string sourceFile, string targetPng)
     {
         if (!File.Exists(sourceFile) || new FileInfo(sourceFile).Length == 0) return null;
@@ -450,13 +478,28 @@ public static class TerminalImageHelper
                 return null;
             }
 
-            float radius = MathF.Max(6.0f, image.Width * 0.017f);
-            ApplyGeometricRoundedCorners(image.Data, image.Width, image.Height, radius);
+            int width = image.Width;
+            int height = image.Height;
+            byte[] pixelData = image.Data;
+
+            // 若图像尺寸超过 1000 像素，使用双线性插值算法等比缩放至 1000 像素内，大幅节省大对象堆与 Kitty Base64 传输内存
+            if (width > MaxCoverDimension || height > MaxCoverDimension)
+            {
+                float scale = Math.Min((float)MaxCoverDimension / width, (float)MaxCoverDimension / height);
+                int scaledW = Math.Max(1, (int)MathF.Round(width * scale));
+                int scaledH = Math.Max(1, (int)MathF.Round(height * scale));
+                pixelData = ResizeBilinear(pixelData, width, height, scaledW, scaledH);
+                width = scaledW;
+                height = scaledH;
+            }
+
+            float radius = MathF.Max(6.0f, width * 0.017f);
+            ApplyGeometricRoundedCorners(pixelData, width, height, radius);
 
             await using (var outStream = File.Create(tmpPng))
             {
                 var writer = new StbImageWriteSharp.ImageWriter();
-                writer.WritePng(image.Data, image.Width, image.Height, StbImageWriteSharp.ColorComponents.RedGreenBlueAlpha, outStream);
+                writer.WritePng(pixelData, width, height, StbImageWriteSharp.ColorComponents.RedGreenBlueAlpha, outStream);
             }
 
             if (IsValidPngFile(tmpPng))
@@ -479,9 +522,59 @@ public static class TerminalImageHelper
         finally
         {
             try { if (File.Exists(tmpPng)) File.Delete(tmpPng); } catch {}
+            GC.Collect(2, GCCollectionMode.Optimized, false, false);
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 对 4 通道 RGBA 像素数组执行高质量双线性插值等比缩放
+    /// </summary>
+    private static byte[] ResizeBilinear(byte[] src, int srcW, int srcH, int dstW, int dstH)
+    {
+        if (srcW == dstW && srcH == dstH) return src;
+
+        byte[] dst = new byte[dstW * dstH * 4];
+        float xRatio = (float)(srcW - 1) / Math.Max(1, dstW - 1);
+        float yRatio = (float)(srcH - 1) / Math.Max(1, dstH - 1);
+
+        for (int y = 0; y < dstH; y++)
+        {
+            float srcY = y * yRatio;
+            int y1 = (int)srcY;
+            int y2 = Math.Min(y1 + 1, srcH - 1);
+            float yLerp = srcY - y1;
+
+            int dstRowOffset = y * dstW * 4;
+            int srcRow1Offset = y1 * srcW * 4;
+            int srcRow2Offset = y2 * srcW * 4;
+
+            for (int x = 0; x < dstW; x++)
+            {
+                float srcX = x * xRatio;
+                int x1 = (int)srcX;
+                int x2 = Math.Min(x1 + 1, srcW - 1);
+                float xLerp = srcX - x1;
+
+                int p11 = srcRow1Offset + x1 * 4;
+                int p12 = srcRow1Offset + x2 * 4;
+                int p21 = srcRow2Offset + x1 * 4;
+                int p22 = srcRow2Offset + x2 * 4;
+
+                int dstOffset = dstRowOffset + x * 4;
+
+                for (int c = 0; c < 4; c++)
+                {
+                    float top = src[p11 + c] + (src[p12 + c] - src[p11 + c]) * xLerp;
+                    float bottom = src[p21 + c] + (src[p22 + c] - src[p21 + c]) * xLerp;
+                    float val = top + (bottom - top) * yLerp;
+                    dst[dstOffset + c] = (byte)Math.Clamp((int)MathF.Round(val), 0, 255);
+                }
+            }
+        }
+
+        return dst;
     }
 
     private static void ApplyGeometricRoundedCorners(byte[] data, int w, int h, float radius)
@@ -600,7 +693,7 @@ public static class TerminalImageHelper
     private readonly record struct ImageCacheKey(string FilePath, int Cols, int Rows, long LastWriteTicks);
 
     private static readonly Lock s_cacheLock = new();
-    private const int MaxMemoryCacheEntries = 16;
+    private const int MaxMemoryCacheEntries = 12;
     private static readonly Dictionary<ImageCacheKey, LinkedListNode<(ImageCacheKey Key, byte[] Payload)>> s_memoryCache = new(MaxMemoryCacheEntries);
     private static readonly LinkedList<(ImageCacheKey Key, byte[] Payload)> s_lruList = new();
 

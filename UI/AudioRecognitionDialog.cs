@@ -133,7 +133,7 @@ public sealed class AudioRecognitionDialog : Dialog
             ShadowStyle = ShadowStyles.None
         };
         _actionBtn.SetScheme(TransparentDialogScheme);
-        _actionBtn.Accepting += (s, e) => HandleActionTriggered();
+        _actionBtn.Accepting += (s, e) => { e.Handled = true; HandleActionTriggered(); };
 
         _sourceBtn = new Button
         {
@@ -146,7 +146,7 @@ public sealed class AudioRecognitionDialog : Dialog
         };
         _sourceBtn.SetScheme(TransparentDialogScheme);
         _sourceBtn.KeyBindings.Clear(); // 移除按钮内置热键，统一由窗体 KeyDown 分发
-        _sourceBtn.Accepting += (s, e) => ToggleAudioSource();
+        _sourceBtn.Accepting += (s, e) => { e.Handled = true; ToggleAudioSource(); };
 
         _keyBtn = new Button
         {
@@ -157,7 +157,7 @@ public sealed class AudioRecognitionDialog : Dialog
             ShadowStyle = ShadowStyles.None
         };
         _keyBtn.SetScheme(TransparentDialogScheme);
-        _keyBtn.Accepting += (s, e) => ShowAcrCloudConfigDialog();
+        _keyBtn.Accepting += (s, e) => { e.Handled = true; ShowAcrCloudConfigDialog(); };
 
         _cancelBtn = new Button
         {
@@ -168,7 +168,7 @@ public sealed class AudioRecognitionDialog : Dialog
             ShadowStyle = ShadowStyles.None
         };
         _cancelBtn.SetScheme(TransparentDialogScheme);
-        _cancelBtn.Accepting += (s, e) => HandleCancel();
+        _cancelBtn.Accepting += (s, e) => { e.Handled = true; HandleCancel(); };
 
         Add(_statusLabel, _detailLabel1, _detailLabel2, _detailLabel3, _actionBtn, _sourceBtn, _keyBtn, _cancelBtn);
 
@@ -346,11 +346,18 @@ public sealed class AudioRecognitionDialog : Dialog
         {
             var token = _cts.Token;
             var sw = Stopwatch.StartNew();
-            const double totalSeconds = 15.0;
+
+            // 麦克风模式延长总时长并加密早期检查点；内录保持原有节奏
+            bool isMic = _currentSource == AudioRecordSource.Microphone;
+            double totalSeconds = isMic ? 20.0 : 15.0;
             const int intervalMs = 100;
 
-            // 渐进切片检查时间点 (逐级推进识别)
-            double[] sliceCheckpoints = [2.2, 3.5, 5.0, 6.8, 8.8, 11.2, 15.0];
+            // 麦克风：2.0s 起每 0.8s 一个，共 8 个密集点 + 后段 2 个补充点
+            // 内录：沿用原有 7 个渐进切片
+            double[] sliceCheckpoints = isMic
+                ? [2.0, 2.8, 3.6, 4.4, 5.2, 6.2, 7.4, 9.0, 12.0, 17.0]
+                : [2.2, 3.5, 5.0, 6.8, 8.8, 11.2, 15.0];
+
             bool[] checkedSlices = new bool[sliceCheckpoints.Length];
             int inflightRequests = 0;
 
@@ -376,12 +383,21 @@ public sealed class AudioRecognitionDialog : Dialog
                         }
                     });
 
-                    // 检查到达切片点并触发比对
+                    // 检查所有到达的切片点并并发触发（不 break，允许多点同时在途）
                     for (int i = 0; i < sliceCheckpoints.Length; i++)
                     {
                         if (elapsed >= sliceCheckpoints[i] && !checkedSlices[i])
                         {
                             checkedSlices[i] = true;
+
+                            // 静音检测：最近 0.5s 无有效信号则跳过本切片，减少无效请求
+                            bool hasSignal = _recordingSession?.HasMeaningfulSignal() ?? false;
+                            if (!hasSignal)
+                            {
+                                AppLogger.Force("AudioRecognitionDialog", $"Skipping slice at {sliceCheckpoints[i]:F1}s: no meaningful signal detected.");
+                                continue;
+                            }
+
                             var samples = _recordingSession?.GetSnapshotSamples();
                             if (samples != null && samples.Length >= (int)(16000 * 1.8))
                             {
@@ -407,7 +423,6 @@ public sealed class AudioRecognitionDialog : Dialog
                                     }
                                 }, token);
                             }
-                            break;
                         }
                     }
                 }

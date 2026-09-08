@@ -16,38 +16,12 @@ namespace QQMusic.Tui.Services;
 public static class AudioCacheService
 {
     private static readonly HttpClient s_httpClient = new();
-    private static readonly string s_cacheDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        ".cache", "qqmusic-tui", "audio"
-    );
-
-    /// <summary>
-    /// 默认最大音频缓存容量（512 MB）
-    /// </summary>
-    public static long MaxCacheSizeBytes { get; set; } = 512L * 1024 * 1024;
+    private static readonly string s_cacheDir = CacheManager.AudioDir;
 
     private static readonly ConcurrentDictionary<string, Task<string?>> s_inFlightDownloads = new(StringComparer.OrdinalIgnoreCase);
 
     static AudioCacheService()
     {
-        try
-        {
-            if (!Directory.Exists(s_cacheDir))
-            {
-                Directory.CreateDirectory(s_cacheDir);
-            }
-
-            // 启动时后台异步清理遗留临时文件与超额缓存
-            Task.Run(() =>
-            {
-                CleanupOrphanTmpFiles();
-                EnforceCacheLimit();
-            });
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Warn("AudioCacheService", $"Init audio cache dir failed: {ex.Message}");
-        }
     }
 
     /// <summary>
@@ -66,14 +40,7 @@ public static class AudioCacheService
                 // 确保文件大小大于 64KB，排除损坏或零字节异常文件
                 if (fi.Length > 64 * 1024)
                 {
-                    try
-                    {
-                        File.SetLastAccessTimeUtc(targetFile, DateTime.UtcNow);
-                    }
-                    catch
-                    {
-                        // 忽略更新访问时间失败
-                    }
+                    CacheManager.RecordAccess($"audio/{songMid}_{tier}.media", fi.Length);
                     return targetFile;
                 }
             }
@@ -120,6 +87,7 @@ public static class AudioCacheService
                 var existingFi = new FileInfo(targetFile);
                 if (existingFi.Length > 64 * 1024)
                 {
+                    CacheManager.RecordAccess($"audio/{songMid}_{tier}.media", existingFi.Length);
                     return targetFile;
                 }
             }
@@ -144,11 +112,11 @@ public static class AudioCacheService
             if (fi.Length > 64 * 1024)
             {
                 File.Move(tempFile, targetFile, overwrite: true);
-                File.SetLastAccessTimeUtc(targetFile, DateTime.UtcNow);
+                CacheManager.RecordAccess($"audio/{songMid}_{tier}.media", fi.Length);
                 AppLogger.Info("AudioCacheService", $"Audio cached successfully ({fi.Length / 1024} KB): {targetFile}");
 
                 // 执行磁盘配额检查
-                EnforceCacheLimit();
+                CacheManager.EnforceLimitAsync();
                 return targetFile;
             }
             else
@@ -179,79 +147,10 @@ public static class AudioCacheService
     }
 
     /// <summary>
-    /// LRU 容量淘汰机制：若总大小超出上限，按最后访问时间清理最旧音频至阈值以下
+    /// 容量淘汰机制：直接交由 CacheManager 全局 SLRU 管控
     /// </summary>
     public static void EnforceCacheLimit()
     {
-        try
-        {
-            if (!Directory.Exists(s_cacheDir)) return;
-
-            var dirInfo = new DirectoryInfo(s_cacheDir);
-            var files = dirInfo.GetFiles("*.media");
-
-            long totalBytes = 0;
-            foreach (var f in files)
-            {
-                totalBytes += f.Length;
-            }
-
-            if (totalBytes <= MaxCacheSizeBytes) return;
-
-            AppLogger.Info("AudioCacheService", $"Audio cache size ({totalBytes / 1024 / 1024} MB) exceeds limit ({MaxCacheSizeBytes / 1024 / 1024} MB), starting LRU eviction...");
-
-            // 按最后访问时间升序排序（最旧的在前面）
-            Array.Sort(files, (a, b) =>
-            {
-                var cmp = a.LastAccessTimeUtc.CompareTo(b.LastAccessTimeUtc);
-                return cmp != 0 ? cmp : a.LastWriteTimeUtc.CompareTo(b.LastWriteTimeUtc);
-            });
-
-            long targetBytes = (long)(MaxCacheSizeBytes * 0.8); // 清理至 80% 容量防抖
-
-            foreach (var f in files)
-            {
-                if (totalBytes <= targetBytes) break;
-                try
-                {
-                    var len = f.Length;
-                    f.Delete();
-                    totalBytes -= len;
-                    AppLogger.Info("AudioCacheService", $"Evicted old audio cache: {f.Name}");
-                }
-                catch
-                {
-                    // 正在占用的文件忽略
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            AppLogger.Warn("AudioCacheService", $"EnforceCacheLimit failed: {ex.Message}");
-        }
-    }
-
-    private static void CleanupOrphanTmpFiles()
-    {
-        try
-        {
-            if (!Directory.Exists(s_cacheDir)) return;
-
-            var dirInfo = new DirectoryInfo(s_cacheDir);
-            var tmpFiles = dirInfo.GetFiles("*.tmp.*");
-            foreach (var tmp in tmpFiles)
-            {
-                try
-                {
-                    // 若超过 1 小时未变动则视为上次异常残留
-                    if (DateTime.UtcNow - tmp.LastWriteTimeUtc > TimeSpan.FromHours(1))
-                    {
-                        tmp.Delete();
-                    }
-                }
-                catch { }
-            }
-        }
-        catch { }
+        CacheManager.EnforceLimitAsync();
     }
 }

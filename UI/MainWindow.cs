@@ -825,7 +825,7 @@ public sealed partial class MainWindow : Window
             }
             if (targetSong.IsLocal || targetSong.IsWebDav)
             {
-                _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目不支持在线收藏");
+                _controlBar.UpdateStatus("本地/WebDAV 曲目不支持在线收藏");
                 return;
             }
             await ToggleSongFavoriteAsync(targetSong);

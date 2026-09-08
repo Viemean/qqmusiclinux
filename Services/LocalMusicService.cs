@@ -45,7 +45,7 @@ public static class LocalMusicService
         ".config", "qqmusic-tui"
     );
     private static readonly string s_configFile = Path.Combine(s_configDir, "local_music.json");
-    private static readonly string s_cacheDir = Path.Combine(Path.GetTempPath(), "qqmusic-tui", "covers");
+    private static readonly string s_cacheDir = CacheManager.CoversDir;
 
     private static readonly HashSet<string> s_supportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -579,9 +579,14 @@ public static class LocalMusicService
 
         var md5 = ComputeMd5(song.LocalFilePath);
         var targetPng = Path.Combine(s_cacheDir, $"local_{md5}.png");
-        if (File.Exists(targetPng) && new FileInfo(targetPng).Length > 0)
+        if (File.Exists(targetPng))
         {
-            return targetPng;
+            var fi = new FileInfo(targetPng);
+            if (fi.Length > 0)
+            {
+                CacheManager.RecordAccess($"covers/{Path.GetFileName(targetPng)}", fi.Length);
+                return targetPng;
+            }
         }
 
         // 1. 尝试使用 ATL.NET 内存直读从音频文件中提取内嵌封面
