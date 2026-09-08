@@ -57,9 +57,10 @@ public sealed class ShazamAlgorithm
             NumberSamples = samples.Length
         };
 
-        const int maxPeaks = 255;
-        const double maxTimeSeconds = 3.1;
+        const int maxPeaks = 1024;
+        const double maxTimeSeconds = 12.0;
         int maxSamples = Math.Min(samples.Length, (int)(maxTimeSeconds * 16000));
+        signature.NumberSamples = maxSamples;
 
         int offset = 0;
         while (offset + StepSize <= maxSamples)

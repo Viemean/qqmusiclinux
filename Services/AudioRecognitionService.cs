@@ -54,73 +54,53 @@ public static class AudioRecognitionService
     }
 
     /// <summary>
+    /// 预热听歌识曲网络连接
+    /// </summary>
+    public static void PreWarm()
+    {
+        _ = NativeShazamService.PreWarmConnectionAsync();
+    }
+
+    /// <summary>
     /// 纯内存双引擎并发识别 16000Hz PCM 采样切片并联动 QQ 音乐检索
-    /// (同时向 Apple Shazam 与 ACRCloud 发送数据，以苹果为优先)
+    /// (Shazam 与 ACRCloud 真正独立并发竞态，任意引擎命中立即返回)
     /// </summary>
     public static async Task<RecognitionResult> RecognizeAndMatchPcmAsync(short[] pcmSamples, CancellationToken cancellationToken = default)
     {
-        if (pcmSamples == null || pcmSamples.Length < 16000 * 2)
+        if (pcmSamples == null || pcmSamples.Length < (int)(16000 * 1.8))
         {
             return new RecognitionResult(false, "", "", "", null, "音频样本过短，请等待累积更多音频");
         }
 
         try
         {
-            // 1. 同时向 Apple Shazam 与 ACRCloud 启动并发识别
             var shazamTask = NativeShazamService.RecognizePcmSamplesAsync(pcmSamples, cancellationToken);
-            var acrTask = AcrCloudService.RecognizePcmSamplesAsync(pcmSamples, cancellationToken);
+            var isAcrConfigured = AcrCloudConfig.Current.IsConfigured;
+            var acrTask = isAcrConfigured
+                ? AcrCloudService.RecognizePcmSamplesAsync(pcmSamples, cancellationToken)
+                : null;
 
-            // 2. 竞态与优先仲裁：
-            // 若 Shazam 率先完成且成功，直接采纳；
-            // 若 ACRCloud 率先完成且成功，为尊重“苹果优先”规则，给 Shazam 预留最多 600ms 宽限期；若超时或失败立即采纳 ACRCloud；
-            // 若两者都完成，优先取 Shazam。
-            (bool Success, string Title, string Artist, string Album, string Error) winner = default;
+            var pendingTasks = acrTask != null
+                ? new List<Task<(bool Success, string Title, string Artist, string Album, string Error)>> { shazamTask, acrTask }
+                : new List<Task<(bool Success, string Title, string Artist, string Album, string Error)>> { shazamTask };
 
-            var firstCompleted = await Task.WhenAny(shazamTask, acrTask);
-            if (firstCompleted == shazamTask)
+            (bool Success, string Title, string Artist, string Album, string Error) lastErrorRes = default;
+
+            while (pendingTasks.Count > 0)
             {
-                var shazamRes = await shazamTask;
-                if (shazamRes.Success && !string.IsNullOrWhiteSpace(shazamRes.Title))
+                var completedTask = await Task.WhenAny(pendingTasks);
+                pendingTasks.Remove(completedTask);
+
+                var res = await completedTask;
+                if (res.Success && !string.IsNullOrWhiteSpace(res.Title))
                 {
-                    winner = shazamRes;
+                    return await MatchWithQqMusicAsync(res.Title, res.Artist, res.Album);
                 }
-                else
-                {
-                    var acrRes = await acrTask;
-                    winner = (acrRes.Success && !string.IsNullOrWhiteSpace(acrRes.Title)) ? acrRes : shazamRes;
-                }
-            }
-            else
-            {
-                var acrRes = await acrTask;
-                if (acrRes.Success && !string.IsNullOrWhiteSpace(acrRes.Title))
-                {
-                    // ACRCloud 率先出结果，给慢引擎 Shazam 预留最多 600ms
-                    var delayTask = Task.Delay(600, cancellationToken);
-                    var completed = await Task.WhenAny(shazamTask, delayTask);
-                    if (completed == shazamTask)
-                    {
-                        var shazamRes = await shazamTask;
-                        winner = (shazamRes.Success && !string.IsNullOrWhiteSpace(shazamRes.Title)) ? shazamRes : acrRes;
-                    }
-                    else
-                    {
-                        winner = acrRes;
-                    }
-                }
-                else
-                {
-                    var shazamRes = await shazamTask;
-                    winner = (shazamRes.Success && !string.IsNullOrWhiteSpace(shazamRes.Title)) ? shazamRes : acrRes;
-                }
+
+                lastErrorRes = res;
             }
 
-            if (winner.Success && !string.IsNullOrWhiteSpace(winner.Title))
-            {
-                return await MatchWithQqMusicAsync(winner.Title, winner.Artist, winner.Album);
-            }
-
-            return new RecognitionResult(false, "", "", "", null, string.IsNullOrEmpty(winner.Error) ? "未识别到匹配的歌曲信息" : winner.Error);
+            return new RecognitionResult(false, "", "", "", null, string.IsNullOrEmpty(lastErrorRes.Error) ? "未识别到匹配的歌曲信息" : lastErrorRes.Error);
         }
         catch (OperationCanceledException)
         {
@@ -221,7 +201,7 @@ public static class AudioRecognitionService
         return cleaned;
     }
 
-    private static Song? FindBestMatchedSong(string targetTitle, string targetArtist, string targetAlbum, List<Song> candidates)
+    public static Song? FindBestMatchedSong(string targetTitle, string targetArtist, string targetAlbum, List<Song> candidates)
     {
         string cvName = ExtractCvName(targetArtist);
         string cleanArtist = CleanArtistName(targetArtist);

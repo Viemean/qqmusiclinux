@@ -7,6 +7,7 @@ using Terminal.Gui.Views;
 using QQMusic.Tui.Models;
 using QQMusic.Tui.Services;
 using QQMusic.Tui.Services.AcrCloud;
+using QQMusic.Tui.Utils;
 using Attribute = Terminal.Gui.Drawing.Attribute;
 
 namespace QQMusic.Tui.UI;
@@ -29,8 +30,10 @@ public sealed class AudioRecognitionDialog : Dialog
     private readonly Button _keyBtn;
     private readonly Button _cancelBtn;
 
+    // 记忆用户选择的录音源，避免每次打开弹窗时重置
     private static AudioRecordSource s_currentSource = AudioRecordSource.SystemInternal;
     private AudioRecordSource _currentSource = s_currentSource;
+    private long _lastToggleTick = 0;
     private Song? _recognizedSong;
     private bool _isRecognized = false;
     private bool _isWorking = false;
@@ -50,9 +53,18 @@ public sealed class AudioRecognitionDialog : Dialog
         Editable  = new Attribute(Color.White, Color.None)
     };
 
+    private string GetCurrentSourceButtonText()
+    {
+        return _currentSource == AudioRecordSource.SystemInternal ? "内录 (T)" : "麦克风 (T)";
+    }
+
     public AudioRecognitionDialog(Action<Song>? onSongSelected, bool inLyricArea = false)
     {
         _onSongSelected = onSongSelected;
+        _currentSource = s_currentSource;
+
+        // 预热网络连接池
+        AudioRecognitionService.PreWarm();
 
         Title = "听歌识曲";
         int dlgW = 58;
@@ -74,7 +86,9 @@ public sealed class AudioRecognitionDialog : Dialog
 
         _statusLabel = new Label
         {
-            Text = "[系统内录] 正在识别...",
+            Text = _currentSource == AudioRecordSource.SystemInternal
+                ? "[系统内录] 音频识别中..."
+                : "[麦克风] 音频识别中...",
             X = 3,
             Y = 1,
             Width = Dim.Fill(2)
@@ -85,7 +99,7 @@ public sealed class AudioRecognitionDialog : Dialog
         {
             Text = "",
             X = 3,
-            Y = 3,
+            Y = 5,
             Width = Dim.Fill(2)
         };
         _detailLabel1.SetScheme(TransparentDialogScheme);
@@ -94,7 +108,7 @@ public sealed class AudioRecognitionDialog : Dialog
         {
             Text = "",
             X = 3,
-            Y = 4,
+            Y = 6,
             Width = Dim.Fill(2),
             Visible = false
         };
@@ -104,7 +118,7 @@ public sealed class AudioRecognitionDialog : Dialog
         {
             Text = "",
             X = 3,
-            Y = 5,
+            Y = 7,
             Width = Dim.Fill(2),
             Visible = false
         };
@@ -123,13 +137,15 @@ public sealed class AudioRecognitionDialog : Dialog
 
         _sourceBtn = new Button
         {
-            Text = _currentSource == AudioRecordSource.SystemInternal ? "内录 (T)" : "麦克风 (T)",
+            Text = GetCurrentSourceButtonText(),
             X = Pos.Right(_actionBtn) + 2,
             Y = Pos.AnchorEnd(1),
             NoDecorations = true,
-            ShadowStyle = ShadowStyles.None
+            ShadowStyle = ShadowStyles.None,
+            CanFocus = false
         };
         _sourceBtn.SetScheme(TransparentDialogScheme);
+        _sourceBtn.KeyBindings.Clear(); // 移除按钮内置热键，统一由窗体 KeyDown 分发
         _sourceBtn.Accepting += (s, e) => ToggleAudioSource();
 
         _keyBtn = new Button
@@ -164,14 +180,14 @@ public sealed class AudioRecognitionDialog : Dialog
                 return;
             }
 
-            if (k == Key.Esc || k.AsRune.Value == 'q' || k.AsRune.Value == 'Q')
+            if (k == Key.Esc || k == Key.Q || k == Key.Q.WithShift)
             {
                 k.Handled = true;
                 HandleCancel();
                 return;
             }
 
-            if (k == Key.R || k.AsRune.Value == 'r' || k.AsRune.Value == 'R')
+            if (k == Key.R || k == Key.R.WithShift)
             {
                 k.Handled = true;
                 if (_isRecognized)
@@ -185,7 +201,7 @@ public sealed class AudioRecognitionDialog : Dialog
                 return;
             }
 
-            if (k == Key.T || k.AsRune.Value == 't' || k.AsRune.Value == 'T')
+            if (k == Key.T || k == Key.T.WithShift)
             {
                 k.Handled = true;
                 if (!_isRecognized)
@@ -195,7 +211,7 @@ public sealed class AudioRecognitionDialog : Dialog
                 return;
             }
 
-            if (k == Key.K || k.AsRune.Value == 'k' || k.AsRune.Value == 'K')
+            if (k == Key.K || k == Key.K.WithShift)
             {
                 k.Handled = true;
                 if (!_isRecognized)
@@ -206,9 +222,10 @@ public sealed class AudioRecognitionDialog : Dialog
             }
         };
 
+        _cancelBtn.KeyBindings.Remove(Key.Space);
+
         MikuTheme.ApplyTo(this, TransparentDialogScheme);
 
-        // 弹窗启动后立即以默认系统内录开启流式识别
         Application.AddTimeout(TimeSpan.FromMilliseconds(150), () =>
         {
             if (!_isDismissed)
@@ -222,10 +239,21 @@ public sealed class AudioRecognitionDialog : Dialog
     private void ToggleAudioSource()
     {
         if (_isDismissed) return;
+        var now = Environment.TickCount64;
+        if (now - _lastToggleTick < 500)
+        {
+            return;
+        }
+        _lastToggleTick = now;
+
+        var oldSource = _currentSource;
         _currentSource = _currentSource == AudioRecordSource.SystemInternal
             ? AudioRecordSource.Microphone
             : AudioRecordSource.SystemInternal;
         s_currentSource = _currentSource;
+        _sourceBtn.Text = GetCurrentSourceButtonText();
+        AppLogger.Force("AudioRecognitionDialog", $"User toggled audio source: {oldSource} -> {_currentSource}");
+
         StartRecognitionProcess();
     }
 
@@ -243,7 +271,6 @@ public sealed class AudioRecognitionDialog : Dialog
 
         if (_isRecognized)
         {
-            // 成功态：触发播放并关闭弹窗
             _isDismissed = true;
             var songToPlay = _recognizedSong;
             StopAllProcesses();
@@ -255,7 +282,6 @@ public sealed class AudioRecognitionDialog : Dialog
             return;
         }
 
-        // 重新开始识别
         StartRecognitionProcess();
     }
 
@@ -268,26 +294,25 @@ public sealed class AudioRecognitionDialog : Dialog
         _isRecognized = false;
         _recognizedSong = null;
 
-        var sourceTitle = _currentSource == AudioRecordSource.SystemInternal ? "[系统内录] 音频识别中..." : "[麦克风外录] 音频识别中...";
-        _statusLabel.Text = sourceTitle;
+        _statusLabel.Text = _currentSource == AudioRecordSource.SystemInternal
+            ? "[系统内录] 音频识别中..."
+            : "[麦克风] 音频识别中...";
         _statusLabel.Y = 1;
+        _statusLabel.Visible = true;
 
         _detailLabel1.Text = "[░░░░░░░░░░░░░░░░] 0.0s / 15s";
         _detailLabel1.Y = 3;
         _detailLabel1.Visible = true;
 
-        _detailLabel2.Text = AcrCloudConfig.Current.IsConfigured
-            ? "Shazam + ACRCloud"
-            : "Shazam";
-        _detailLabel2.Y = 5;
-        _detailLabel2.Visible = true;
+        _detailLabel2.Text = "";
+        _detailLabel2.Visible = false;
         _detailLabel3.Visible = false;
 
         _actionBtn.Text = "重试 (R)";
         _actionBtn.X = 2;
         _actionBtn.Visible = true;
 
-        _sourceBtn.Text = _currentSource == AudioRecordSource.SystemInternal ? "内录 (T)" : "麦克风 (T)";
+        _sourceBtn.Text = GetCurrentSourceButtonText();
         _sourceBtn.X = Pos.Right(_actionBtn) + 2;
         _sourceBtn.Visible = true;
 
@@ -301,6 +326,15 @@ public sealed class AudioRecognitionDialog : Dialog
         _cancelBtn.SetFocus();
         SetNeedsDraw();
 
+        AppLogger.Force("AudioRecognitionDialog", $"Starting recognition process. FixedSource: {_currentSource}");
+
+        // 检测系统内录输出可用性 (避免在无任何声卡输出时静音等待)
+        if (_currentSource == AudioRecordSource.SystemInternal && !AudioDeviceHelper.HasInternalRecordDevice())
+        {
+            ShowDeviceUnavailable("未检测到可用的系统内录通道 (无声卡输出)", "请连接耳机/扬声器，或按 T 切换为麦克风外录");
+            return;
+        }
+
         _recordingSession = AudioRecordingService.StartRecordingSession(_currentSource);
         if (!_recordingSession.IsRunning)
         {
@@ -312,11 +346,11 @@ public sealed class AudioRecognitionDialog : Dialog
         {
             var token = _cts.Token;
             var sw = Stopwatch.StartNew();
-            const double totalSeconds = 15.0; // 调整为最大 15 秒
+            const double totalSeconds = 15.0;
             const int intervalMs = 100;
 
-            // 渐进累积切片检查时间点 (双引擎并发)
-            double[] sliceCheckpoints = [3.2, 5.0, 7.5, 11.0, 15.0];
+            // 渐进切片检查时间点 (逐级推进识别)
+            double[] sliceCheckpoints = [2.2, 3.5, 5.0, 6.8, 8.8, 11.2, 15.0];
             bool[] checkedSlices = new bool[sliceCheckpoints.Length];
             int inflightRequests = 0;
 
@@ -327,9 +361,10 @@ public sealed class AudioRecognitionDialog : Dialog
                     await Task.Delay(intervalMs, token);
                     var elapsed = sw.Elapsed.TotalSeconds;
 
-                    // 刷新进度条 UI
+                    // 刷新进度条
                     Application.Invoke(() =>
                     {
+                        if (_isDismissed) return;
                         if (!_isRecognized && _isWorking)
                         {
                             int barLen = 16;
@@ -341,14 +376,14 @@ public sealed class AudioRecognitionDialog : Dialog
                         }
                     });
 
-                    // 检查是否到达渐进切片比对点
+                    // 检查到达切片点并触发比对
                     for (int i = 0; i < sliceCheckpoints.Length; i++)
                     {
                         if (elapsed >= sliceCheckpoints[i] && !checkedSlices[i])
                         {
                             checkedSlices[i] = true;
                             var samples = _recordingSession?.GetSnapshotSamples();
-                            if (samples != null && samples.Length >= 16000 * 2.5)
+                            if (samples != null && samples.Length >= (int)(16000 * 1.8))
                             {
                                 Interlocked.Increment(ref inflightRequests);
                                 _ = Task.Run(async () =>
@@ -356,10 +391,14 @@ public sealed class AudioRecognitionDialog : Dialog
                                     try
                                     {
                                         var result = await AudioRecognitionService.RecognizeAndMatchPcmAsync(samples, token);
-                                        if (result.Success && !_isRecognized)
+                                        if (result.Success && !_isRecognized && !_isDismissed)
                                         {
                                             _isRecognized = true;
-                                            Application.Invoke(() => ShowSuccess(result));
+                                            Application.Invoke(() =>
+                                            {
+                                                if (_isDismissed) return;
+                                                ShowSuccess(result);
+                                            });
                                         }
                                     }
                                     finally
@@ -373,18 +412,22 @@ public sealed class AudioRecognitionDialog : Dialog
                     }
                 }
 
-                // 若已满 15 秒，等待网络比对安全返回
-                if (!_isRecognized && !token.IsCancellationRequested)
+                // 录音结束后等待在途请求返回
+                if (!_isRecognized && !token.IsCancellationRequested && !_isDismissed)
                 {
-                    int waitTimeout = 35; // 等待最多 3.5 秒
-                    while (inflightRequests > 0 && waitTimeout-- > 0 && !_isRecognized && !token.IsCancellationRequested)
+                    int waitTimeout = 35;
+                    while (inflightRequests > 0 && waitTimeout-- > 0 && !_isRecognized && !token.IsCancellationRequested && !_isDismissed)
                     {
                         await Task.Delay(100, token);
                     }
 
-                    if (!_isRecognized && !token.IsCancellationRequested)
+                    if (!_isRecognized && !token.IsCancellationRequested && !_isDismissed)
                     {
-                        Application.Invoke(() => ShowFailed("未能匹配到对应歌曲"));
+                        Application.Invoke(() =>
+                        {
+                            if (_isDismissed) return;
+                            ShowFailed("未能匹配到对应歌曲");
+                        });
                     }
                 }
             }
@@ -393,9 +436,13 @@ public sealed class AudioRecognitionDialog : Dialog
             }
             catch (Exception ex)
             {
-                if (!_isRecognized)
+                if (!_isRecognized && !_isDismissed && !token.IsCancellationRequested)
                 {
-                    Application.Invoke(() => ShowFailed(ex.Message));
+                    Application.Invoke(() =>
+                    {
+                        if (_isDismissed) return;
+                        ShowFailed(ex.Message);
+                    });
                 }
             }
             finally
@@ -411,12 +458,17 @@ public sealed class AudioRecognitionDialog : Dialog
 
     private void ShowSuccess(RecognitionResult result)
     {
+        if (_isDismissed) return;
         StopAllProcesses();
         _isWorking = false;
         _isRecognized = true;
         _recognizedSong = result.MatchedSong;
 
+        AppLogger.Force("AudioRecognitionDialog", $"Recognition success: Title='{result.Title}', Artist='{result.Artist}', Source={_currentSource}");
+
         _statusLabel.Y = 0;
+        _statusLabel.Text = "识别成功！已匹配：";
+
         _detailLabel1.Text = $"曲名: {result.Title}";
         _detailLabel1.Y = 2;
         _detailLabel1.Visible = true;
@@ -434,7 +486,6 @@ public sealed class AudioRecognitionDialog : Dialog
 
         if (_recognizedSong != null)
         {
-            _statusLabel.Text = "识别成功！已匹配：";
             _actionBtn.Text = "立即播放 (Enter)";
             _actionBtn.X = Pos.Center() - 14;
             _actionBtn.Visible = true;
@@ -445,7 +496,6 @@ public sealed class AudioRecognitionDialog : Dialog
         }
         else
         {
-            _statusLabel.Text = "识别成功！已匹配：";
             _actionBtn.Visible = false;
             _cancelBtn.Text = "确定 (Enter/Esc)";
             _cancelBtn.X = Pos.Center() - 8;
@@ -458,15 +508,22 @@ public sealed class AudioRecognitionDialog : Dialog
 
     private void ShowFailed(string message)
     {
+        if (_isDismissed) return;
         StopAllProcesses();
         _isWorking = false;
         _isRecognized = false;
         _recognizedSong = null;
 
-        _statusLabel.Text = "识曲失败 (未匹配到歌曲)";
+        AppLogger.Force("AudioRecognitionDialog", $"Recognition failed for Source={_currentSource}. Reason: {message}");
+
+        _statusLabel.Text = _currentSource == AudioRecordSource.SystemInternal
+            ? "[系统内录] 识曲失败 (未匹配到歌曲)"
+            : "[麦克风] 识曲失败 (未匹配到歌曲)";
         _statusLabel.Y = 1;
 
-        _detailLabel1.Text = "建议调大音量或按 T 切换录音源";
+        _detailLabel1.Text = _currentSource == AudioRecordSource.SystemInternal
+            ? "建议调大系统音量，或按 T 切换为麦克风外录"
+            : "建议靠近声源，或按 T 切换为系统内录";
         _detailLabel1.Y = 3;
         _detailLabel1.Visible = true;
         _detailLabel2.Visible = false;
@@ -476,7 +533,7 @@ public sealed class AudioRecognitionDialog : Dialog
         _actionBtn.X = 2;
         _actionBtn.Visible = true;
 
-        _sourceBtn.Text = _currentSource == AudioRecordSource.SystemInternal ? "内录 (T)" : "麦克风 (T)";
+        _sourceBtn.Text = GetCurrentSourceButtonText();
         _sourceBtn.X = Pos.Right(_actionBtn) + 2;
         _sourceBtn.Visible = true;
 
@@ -489,6 +546,44 @@ public sealed class AudioRecognitionDialog : Dialog
         _cancelBtn.Visible = true;
 
         _actionBtn.SetFocus();
+        SetNeedsDraw();
+    }
+
+    private void ShowDeviceUnavailable(string title, string hint)
+    {
+        StopAllProcesses();
+        _isWorking = false;
+        _isRecognized = false;
+        _recognizedSong = null;
+
+        AppLogger.Force("AudioRecognitionDialog", $"Device unavailable for Source={_currentSource}: {title} | {hint}");
+
+        _statusLabel.Text = $"[设备不可用] {title}";
+        _statusLabel.Y = 1;
+
+        _detailLabel1.Text = hint;
+        _detailLabel1.Y = 3;
+        _detailLabel1.Visible = true;
+        _detailLabel2.Visible = false;
+        _detailLabel3.Visible = false;
+
+        _actionBtn.Text = "重试 (R)";
+        _actionBtn.X = 2;
+        _actionBtn.Visible = true;
+
+        _sourceBtn.Text = GetCurrentSourceButtonText();
+        _sourceBtn.X = Pos.Right(_actionBtn) + 2;
+        _sourceBtn.Visible = true;
+
+        _keyBtn.Text = "密钥 (K)";
+        _keyBtn.X = Pos.Right(_sourceBtn) + 2;
+        _keyBtn.Visible = true;
+
+        _cancelBtn.Text = "关闭 (Esc)";
+        _cancelBtn.X = Pos.Right(_keyBtn) + 2;
+        _cancelBtn.Visible = true;
+
+        _sourceBtn.SetFocus();
         SetNeedsDraw();
     }
 

@@ -29,6 +29,23 @@ public static class NativeShazamService
     }
 
     /// <summary>
+    /// 发送预热请求以建立连接池
+    /// </summary>
+    public static async Task PreWarmConnectionAsync()
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Head, "https://amp.shazam.com/");
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var resp = await s_httpClient.SendAsync(req, cts.Token);
+        }
+        catch
+        {
+            // 忽略预热探针阶段的异常
+        }
+    }
+
+    /// <summary>
     /// 识别本地 WAV 音频切片文件
     /// </summary>
     public static async Task<(bool Success, string Title, string Artist, string Album, string Error)> RecognizeWavAsync(
@@ -62,7 +79,7 @@ public static class NativeShazamService
         ReadOnlyMemory<short> pcmSamples,
         CancellationToken cancellationToken = default)
     {
-        if (pcmSamples.Length < 16000 * 2) // 少于 2 秒直接跳过
+        if (pcmSamples.Length < (int)(16000 * 1.8)) // 少于 1.8 秒直接跳过
         {
             return (false, "", "", "", "音频样本过短，请等待累积更多音频");
         }

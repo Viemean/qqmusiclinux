@@ -397,6 +397,11 @@ public sealed partial class MainWindow
             Y = 5
         };
 
+        if (!Utils.AudioDeviceHelper.HasAudioOutputDevice() && !_isTuiAudioDisabled)
+        {
+            _ = SetTuiAudioDisabledAsync(true);
+        }
+
         var tuiAudioBtn = new Button
         {
             Text = _isTuiAudioDisabled ? "已禁用 (清理进程，仅Web播放) [T]" : "已开启 (本地硬件输出) [T]",
@@ -413,6 +418,11 @@ public sealed partial class MainWindow
 
         void DoToggleTuiAudio()
         {
+            if (_isTuiAudioDisabled && !Utils.AudioDeviceHelper.HasAudioOutputDevice())
+            {
+                _controlBar.UpdateStatus("未检测到本地可用音频输出通道，无法开启本地硬件播放");
+                return;
+            }
             _ = SetTuiAudioDisabledAsync(!_isTuiAudioDisabled);
             UpdateTuiAudioBtn();
         }
