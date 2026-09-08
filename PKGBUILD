@@ -16,8 +16,6 @@ depends=(
 )
 
 optdepends=(
-    'ffmpeg: cover art extraction and display, audio recording'
-    'imagemagick: rounded corner cover rendering in modern terminals'
     'gst-libav: additional audio codecs (AAC/M4A) support'
     'wl-clipboard: Wayland clipboard support for copying song links'
     'xclip: X11 clipboard support for copying song links'

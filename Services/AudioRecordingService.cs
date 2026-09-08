@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
-using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices;
+using QQMusic.Tui.Utils;
 
 namespace QQMusic.Tui.Services;
 
@@ -19,95 +21,224 @@ public enum AudioRecordSource
     Microphone
 }
 
+[StructLayout(LayoutKind.Sequential)]
+public struct pa_sample_spec
+{
+    public int format;   // PA_SAMPLE_S16LE = 3
+    public uint rate;    // 16000
+    public byte channels;// 1
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct pa_buffer_attr
+{
+    public uint maxlength;
+    public uint tlength;
+    public uint prebuf;
+    public uint minreq;
+    public uint fragsize;
+}
+
+public enum pa_stream_direction_t
+{
+    PA_STREAM_NODIRECTION = 0,
+    PA_STREAM_PLAYBACK = 1,
+    PA_STREAM_RECORD = 2,
+    PA_STREAM_UPLOAD = 3
+}
+
+internal static partial class PulseAudioSimpleNative
+{
+    private const string LibPulseSimple = "libpulse-simple.so.0";
+    private const string LibPulse = "libpulse.so.0";
+
+    [LibraryImport(LibPulseSimple, EntryPoint = "pa_simple_new", StringMarshalling = StringMarshalling.Utf8)]
+    public static partial IntPtr pa_simple_new(
+        string? server,
+        string name,
+        pa_stream_direction_t dir,
+        string? dev,
+        string stream_name,
+        in pa_sample_spec ss,
+        IntPtr map,
+        in pa_buffer_attr attr,
+        out int error);
+
+    [LibraryImport(LibPulseSimple, EntryPoint = "pa_simple_read")]
+    public static unsafe partial int pa_simple_read(IntPtr s, void* data, nuint bytes, out int error);
+
+    [LibraryImport(LibPulseSimple, EntryPoint = "pa_simple_free")]
+    public static partial void pa_simple_free(IntPtr s);
+
+    [LibraryImport(LibPulse, EntryPoint = "pa_strerror")]
+    public static partial IntPtr pa_strerror(int error);
+
+    public static string GetErrorMessage(int error)
+    {
+        try
+        {
+            var ptr = pa_strerror(error);
+            return ptr != IntPtr.Zero ? Marshal.PtrToStringUTF8(ptr) ?? $"Code {error}" : $"Code {error}";
+        }
+        catch
+        {
+            return $"Code {error}";
+        }
+    }
+}
+
 /// <summary>
-/// 实时流式录音会话，通过管道写入内存流
+/// 实时流式录音会话，基于 libpulse-simple 原生直连 PulseAudio / PipeWire
 /// </summary>
 public sealed class AudioRecordingSession : IDisposable
 {
     private readonly AudioRecordSource _source;
-    private readonly Process? _process;
+    private IntPtr _pulseHandle;
     private readonly MemoryStream _pcmStream = new(64 * 1024);
     private readonly Lock _lock = new();
     private readonly CancellationTokenSource _cts = new();
-    private readonly Task? _readerTask;
+    private readonly Thread? _recordThread;
     private bool _isDisposed = false;
 
-    public bool IsRunning => _process != null && !_process.HasExited;
+    public bool IsRunning
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _pulseHandle != IntPtr.Zero && !_isDisposed;
+            }
+        }
+    }
 
     public AudioRecordingSession(AudioRecordSource source)
     {
         _source = source;
         var inputDevice = source == AudioRecordSource.SystemInternal
-            ? Utils.AudioDeviceHelper.GetDefaultSinkMonitorDevice()
-            : Utils.AudioDeviceHelper.GetDefaultMicrophoneDevice();
+            ? AudioDeviceHelper.GetDefaultSinkMonitorDevice()
+            : AudioDeviceHelper.GetDefaultMicrophoneDevice();
 
-        var psi = new ProcessStartInfo
+        var ss = new pa_sample_spec
         {
-            FileName = "ffmpeg",
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
+            format = 3, // PA_SAMPLE_S16LE
+            rate = 16000,
+            channels = 1
         };
 
-        psi.ArgumentList.Add("-nostdin");
-        psi.ArgumentList.Add("-nostats");
-        psi.ArgumentList.Add("-loglevel");
-        psi.ArgumentList.Add("quiet");
-        psi.ArgumentList.Add("-f");
-        psi.ArgumentList.Add("pulse");
-        psi.ArgumentList.Add("-thread_queue_size");
-        psi.ArgumentList.Add("1024");
-        psi.ArgumentList.Add("-i");
-        psi.ArgumentList.Add(inputDevice);
-        psi.ArgumentList.Add("-ar");
-        psi.ArgumentList.Add("16000");
-        psi.ArgumentList.Add("-ac");
-        psi.ArgumentList.Add("1");
-        psi.ArgumentList.Add("-f");
-        psi.ArgumentList.Add("s16le");
-        psi.ArgumentList.Add("pipe:1");
+        // 显式指定分片大小（fragsize = 2048 字节，约 64ms），避免 PulseAudio 服务端默认使用数秒的巨大缓冲导致读阻塞
+        var attr = new pa_buffer_attr
+        {
+            maxlength = uint.MaxValue,
+            tlength = uint.MaxValue,
+            prebuf = uint.MaxValue,
+            minreq = uint.MaxValue,
+            fragsize = 2048
+        };
 
         try
         {
-            _process = Process.Start(psi);
-            if (_process != null)
+            int error;
+            _pulseHandle = PulseAudioSimpleNative.pa_simple_new(
+                null,
+                "qqmusic-tui",
+                pa_stream_direction_t.PA_STREAM_RECORD,
+                inputDevice,
+                "Music Recognition",
+                in ss,
+                IntPtr.Zero,
+                in attr,
+                out error
+            );
+
+            // 若指定特定设备失败且为麦克风模式，尝试以系统默认设备重试
+            if (_pulseHandle == IntPtr.Zero && source == AudioRecordSource.Microphone && !string.IsNullOrEmpty(inputDevice))
             {
-                Utils.AppLogger.Force("AudioRecording", $"Started session. Source: {source}, DeviceNode: {inputDevice}, PID: {_process.Id}");
-                var token = _cts.Token;
-                var stdout = _process.StandardOutput.BaseStream;
-                var stderr = _process.StandardError;
+                _pulseHandle = PulseAudioSimpleNative.pa_simple_new(
+                    null,
+                    "qqmusic-tui",
+                    pa_stream_direction_t.PA_STREAM_RECORD,
+                    null,
+                    "Music Recognition",
+                    in ss,
+                    IntPtr.Zero,
+                    in attr,
+                    out error
+                );
+            }
 
-                _ = Task.Run(async () =>
-                {
-                    try { while (!token.IsCancellationRequested && await stderr.ReadLineAsync(token) != null) { } } catch { }
-                }, token);
+            if (_pulseHandle == IntPtr.Zero)
+            {
+                var errStr = PulseAudioSimpleNative.GetErrorMessage(error);
+                AppLogger.Warn("AudioRecording", $"Failed to initialize pa_simple_new. Device: {inputDevice}, Error: {error} ({errStr})");
+                return;
+            }
 
-                _readerTask = Task.Run(async () =>
+            AppLogger.Force("AudioRecording", $"Started session via libpulse-simple. Source: {source}, Device: {inputDevice}");
+
+            _recordThread = new Thread(RecordLoop)
+            {
+                IsBackground = true,
+                Name = "PulseRecordThread"
+            };
+            _recordThread.Start();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn("AudioRecording", $"Exception in AudioRecordingSession init: {ex.Message}");
+            _pulseHandle = IntPtr.Zero;
+        }
+    }
+
+    private unsafe void RecordLoop()
+    {
+        byte[] buffer = new byte[2048]; // ~64ms of 16000Hz 16-bit mono
+        fixed (byte* pBuf = buffer)
+        {
+            while (!_cts.IsCancellationRequested)
+            {
+                IntPtr handle;
+                lock (_lock)
                 {
-                    byte[] buffer = new byte[4096];
-                    try
+                    handle = _pulseHandle;
+                }
+                if (handle == IntPtr.Zero) break;
+
+                int res = PulseAudioSimpleNative.pa_simple_read(handle, pBuf, (nuint)buffer.Length, out int error);
+                if (res < 0)
+                {
+                    if (!_cts.IsCancellationRequested)
                     {
-                        while (!token.IsCancellationRequested)
-                        {
-                            int bytesRead = await stdout.ReadAsync(buffer.AsMemory(0, buffer.Length), token);
-                            if (bytesRead <= 0) break;
-
-                            lock (_lock)
-                            {
-                                _pcmStream.Write(buffer, 0, bytesRead);
-                            }
-                        }
+                        var errStr = PulseAudioSimpleNative.GetErrorMessage(error);
+                        AppLogger.Warn("AudioRecording", $"pa_simple_read error: {error} ({errStr})");
                     }
-                    catch (OperationCanceledException) { }
-                    catch { }
-                }, token);
+                    break;
+                }
+
+                if (_cts.IsCancellationRequested) break;
+
+                lock (_lock)
+                {
+                    _pcmStream.Write(buffer, 0, buffer.Length);
+                }
             }
         }
-        catch
+
+        // 仅在录音线程彻底退出读取循环后，才由本线程安全释放 pulseHandle
+        // 彻底杜绝主线程并发调用 pa_simple_free 导致 pa_mutex_free 发生 EBUSY 断言崩溃
+        lock (_lock)
         {
-            _process = null;
+            if (_pulseHandle != IntPtr.Zero)
+            {
+                try
+                {
+                    PulseAudioSimpleNative.pa_simple_free(_pulseHandle);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("AudioRecording", $"pa_simple_free exception: {ex.Message}");
+                }
+                _pulseHandle = IntPtr.Zero;
+            }
         }
     }
 
@@ -160,32 +291,30 @@ public sealed class AudioRecordingSession : IDisposable
         _isDisposed = true;
 
         try { _cts.Cancel(); } catch { }
+        try { _recordThread?.Join(500); } catch { }
 
-        if (_process != null)
+        // 若录音线程未启动或已停止，在此做兜底释放
+        lock (_lock)
         {
-            try
+            if (_pulseHandle != IntPtr.Zero && (_recordThread == null || !_recordThread.IsAlive))
             {
-                if (!_process.HasExited)
+                try
                 {
-                    _process.Kill(true);
+                    PulseAudioSimpleNative.pa_simple_free(_pulseHandle);
                 }
-            }
-            catch { }
-            finally
-            {
-                _process.Dispose();
+                catch {}
+                _pulseHandle = IntPtr.Zero;
             }
         }
 
-        try { _readerTask?.Wait(200); } catch { }
-        Utils.AppLogger.Force("AudioRecording", $"Stopped session. Captured {_pcmStream.Length} PCM bytes.");
+        AppLogger.Force("AudioRecording", $"Stopped session. Captured {_pcmStream.Length} PCM bytes.");
         _pcmStream.Dispose();
         _cts.Dispose();
     }
 }
 
 /// <summary>
-/// 音频录制服务（PulseAudio / PipeWire）
+/// 音频录制服务（PulseAudio / PipeWire 原生直连）
 /// </summary>
 public static class AudioRecordingService
 {

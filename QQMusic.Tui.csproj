@@ -24,6 +24,9 @@
 
   <ItemGroup>
     <PackageReference Include="Terminal.Gui" Version="2.4.17" />
+    <PackageReference Include="z440.atl.core" Version="7.16.0" />
+    <PackageReference Include="StbImageSharp" Version="2.30.16" />
+    <PackageReference Include="StbImageWriteSharp" Version="1.16.7" />
   </ItemGroup>
 
   <ItemGroup>

@@ -338,7 +338,7 @@ public sealed class AudioRecognitionDialog : Dialog
         _recordingSession = AudioRecordingService.StartRecordingSession(_currentSource);
         if (!_recordingSession.IsRunning)
         {
-            ShowFailed("无法启动录音程序 (请确认安装 ffmpeg)");
+            ShowFailed("无法启动录音服务 (PulseAudio/PipeWire 连接失败)");
             return;
         }
 

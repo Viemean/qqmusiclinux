@@ -427,77 +427,160 @@ public static class TerminalImageHelper
         if (!File.Exists(sourceFile) || new FileInfo(sourceFile).Length == 0) return null;
 
         var tmpPng = targetPng + $".tmp.{Guid.NewGuid():N}.png";
-        bool converted = false;
         try
         {
-            var psiMagick = new System.Diagnostics.ProcessStartInfo
+            byte[] fileBytes = await File.ReadAllBytesAsync(sourceFile);
+            var image = StbImageSharp.ImageResult.FromMemory(fileBytes, StbImageSharp.ColorComponents.RedGreenBlueAlpha);
+            if (image == null || image.Width <= 0 || image.Height <= 0 || image.Data == null)
             {
-                FileName = "magick",
-                Arguments = $"\"{sourceFile}\" ( +clone -fill black -colorize 100 -fill white -draw \"roundrectangle 0,0,%[fx:w-1],%[fx:h-1],%[fx:w*0.017],%[fx:w*0.017]\" -blur 0x1.0 ) -alpha off -compose CopyOpacity -composite -depth 8 \"{tmpPng}\"",
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            using var proc = System.Diagnostics.Process.Start(psiMagick);
-            if (proc != null)
+                return null;
+            }
+
+            float radius = MathF.Max(6.0f, image.Width * 0.017f);
+            ApplyGeometricRoundedCorners(image.Data, image.Width, image.Height, radius);
+
+            await using (var outStream = File.Create(tmpPng))
             {
-                await proc.WaitForExitAsync();
-                if (proc.ExitCode == 0 && IsValidPngFile(tmpPng))
+                var writer = new StbImageWriteSharp.ImageWriter();
+                writer.WritePng(image.Data, image.Width, image.Height, StbImageWriteSharp.ColorComponents.RedGreenBlueAlpha, outStream);
+            }
+
+            if (IsValidPngFile(tmpPng))
+            {
+                try
                 {
-                    converted = true;
+                    File.Move(tmpPng, targetPng, true);
+                    return targetPng;
+                }
+                catch
+                {
+                    return tmpPng;
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // magick 不可用时回退至 ffmpeg
+            AppLogger.Warn("TerminalImageHelper", $"ApplyRoundedCorners failed: {ex.Message}");
+        }
+        finally
+        {
+            try { if (File.Exists(tmpPng)) File.Delete(tmpPng); } catch {}
         }
 
-        if (!converted)
-        {
-            try
-            {
-                var psi = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "ffmpeg",
-                    Arguments = $"-y -i \"{sourceFile}\" \"{tmpPng}\"",
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-                using var proc = System.Diagnostics.Process.Start(psi);
-                if (proc != null)
-                {
-                    await proc.WaitForExitAsync();
-                    if (proc.ExitCode == 0 && IsValidPngFile(tmpPng))
-                    {
-                        converted = true;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Warn("TerminalImageHelper", $"ffmpeg conversion failed: {ex.Message}");
-            }
-        }
-
-        if (converted && IsValidPngFile(tmpPng))
-        {
-            try
-            {
-                File.Move(tmpPng, targetPng, true);
-                return targetPng;
-            }
-            catch
-            {
-                return tmpPng;
-            }
-        }
-
-        try { if (File.Exists(tmpPng)) File.Delete(tmpPng); } catch {}
         return null;
+    }
+
+    private static void ApplyGeometricRoundedCorners(byte[] data, int w, int h, float radius)
+    {
+        if (w <= 0 || h <= 0 || radius <= 0f) return;
+
+        float maxRadius = MathF.Min(w, h) / 2.0f;
+        radius = Math.Clamp(radius, 1.0f, maxRadius);
+        int rLimit = (int)MathF.Ceiling(radius + 1.0f);
+
+        // 1. Top-Left
+        float cxTL = radius;
+        float cyTL = radius;
+        int maxRTL = Math.Min(rLimit, w);
+        int maxBTL = Math.Min(rLimit, h);
+        for (int y = 0; y < maxBTL; y++)
+        {
+            float dy = y - cyTL;
+            if (dy >= 0) continue;
+            for (int x = 0; x < maxRTL; x++)
+            {
+                float dx = x - cxTL;
+                if (dx >= 0) continue;
+                float dist = MathF.Sqrt(dx * dx + dy * dy);
+                int idx = (y * w + x) * 4 + 3;
+                if (dist > radius + 0.5f)
+                {
+                    data[idx] = 0;
+                }
+                else if (dist > radius - 0.5f)
+                {
+                    float factor = radius + 0.5f - dist;
+                    data[idx] = (byte)(data[idx] * Math.Clamp(factor, 0f, 1f));
+                }
+            }
+        }
+
+        // 2. Top-Right
+        float cxTR = (w - 1) - radius;
+        float cyTR = radius;
+        int minLTR = Math.Max(0, w - rLimit);
+        for (int y = 0; y < maxBTL; y++)
+        {
+            float dy = y - cyTR;
+            if (dy >= 0) continue;
+            for (int x = minLTR; x < w; x++)
+            {
+                float dx = x - cxTR;
+                if (dx <= 0) continue;
+                float dist = MathF.Sqrt(dx * dx + dy * dy);
+                int idx = (y * w + x) * 4 + 3;
+                if (dist > radius + 0.5f)
+                {
+                    data[idx] = 0;
+                }
+                else if (dist > radius - 0.5f)
+                {
+                    float factor = radius + 0.5f - dist;
+                    data[idx] = (byte)(data[idx] * Math.Clamp(factor, 0f, 1f));
+                }
+            }
+        }
+
+        // 3. Bottom-Left
+        float cxBL = radius;
+        float cyBL = (h - 1) - radius;
+        int minTBL = Math.Max(0, h - rLimit);
+        for (int y = minTBL; y < h; y++)
+        {
+            float dy = y - cyBL;
+            if (dy <= 0) continue;
+            for (int x = 0; x < maxRTL; x++)
+            {
+                float dx = x - cxBL;
+                if (dx >= 0) continue;
+                float dist = MathF.Sqrt(dx * dx + dy * dy);
+                int idx = (y * w + x) * 4 + 3;
+                if (dist > radius + 0.5f)
+                {
+                    data[idx] = 0;
+                }
+                else if (dist > radius - 0.5f)
+                {
+                    float factor = radius + 0.5f - dist;
+                    data[idx] = (byte)(data[idx] * Math.Clamp(factor, 0f, 1f));
+                }
+            }
+        }
+
+        // 4. Bottom-Right
+        float cxBR = (w - 1) - radius;
+        float cyBR = (h - 1) - radius;
+        for (int y = minTBL; y < h; y++)
+        {
+            float dy = y - cyBR;
+            if (dy <= 0) continue;
+            for (int x = minLTR; x < w; x++)
+            {
+                float dx = x - cxBR;
+                if (dx <= 0) continue;
+                float dist = MathF.Sqrt(dx * dx + dy * dy);
+                int idx = (y * w + x) * 4 + 3;
+                if (dist > radius + 0.5f)
+                {
+                    data[idx] = 0;
+                }
+                else if (dist > radius - 0.5f)
+                {
+                    float factor = radius + 0.5f - dist;
+                    data[idx] = (byte)(data[idx] * Math.Clamp(factor, 0f, 1f));
+                }
+            }
+        }
     }
 
     private readonly record struct ImageCacheKey(string FilePath, int Cols, int Rows, long LastWriteTicks);

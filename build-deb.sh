@@ -68,8 +68,8 @@ Architecture: ${ARCH}
 Maintainer: Yuzuki <lxf74663@gmail.com>
 Installed-Size: ${INSTALLED_SIZE}
 Depends: libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good
-Recommends: gstreamer1.0-libav, ffmpeg
-Suggests: imagemagick, wl-clipboard, xclip
+Recommends: gstreamer1.0-libav
+Suggests: wl-clipboard, xclip
 Homepage: https://github.com/Viemean/qqmusiclinux/tree/tui
 Description: Linux terminal QQ Music player (.NET 10 Native AOT)
  A high-performance terminal QQ Music player written in C# (.NET 10 Native AOT),

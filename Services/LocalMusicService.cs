@@ -35,7 +35,7 @@ public sealed class LocalMusicConfig
 }
 
 /// <summary>
-/// 本地音乐管理服务：支持目录递归扫描（严格跳过隐藏文件与目录）、ffprobe元数据解析、内嵌歌词/封面提取
+/// 本地音乐管理服务：支持目录递归扫描（严格跳过隐藏文件与目录）、ATL.NET 纯托管元数据解析、内嵌歌词/封面提取
 /// 遵循严格要求：默认不添加任何文件夹，必须由用户手动添加
 /// </summary>
 public static class LocalMusicService
@@ -267,8 +267,8 @@ public static class LocalMusicService
                 }
                 else
                 {
-                    // 通过 ffprobe 异步提取
-                    var parsed = await ExtractMetadataWithFfprobeAsync(filePath, fileInfo);
+                    // 通过 ATL.NET 内存直读提取元数据与内嵌信息
+                    var parsed = ExtractMetadataWithAtl(filePath, fileInfo);
                     updatedSongs.Add(parsed);
                 }
             }
@@ -337,9 +337,9 @@ public static class LocalMusicService
     }
 
     /// <summary>
-    /// 使用系统 ffprobe 读取音频文件元数据
+    /// 使用 ATL.NET 纯托管内存直读音频文件元数据
     /// </summary>
-    private static async Task<LocalSongCache> ExtractMetadataWithFfprobeAsync(string filePath, FileInfo fileInfo)
+    private static LocalSongCache ExtractMetadataWithAtl(string filePath, FileInfo fileInfo)
     {
         var entry = new LocalSongCache
         {
@@ -354,91 +354,52 @@ public static class LocalMusicService
 
         try
         {
-            var psi = new ProcessStartInfo
+            var track = new ATL.Track(filePath);
+
+            if (!string.IsNullOrWhiteSpace(track.Title))
             {
-                FileName = "ffprobe",
-                Arguments = $"-v quiet -print_format json -show_format -show_streams \"{filePath}\"",
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-
-            using var proc = Process.Start(psi);
-            if (proc == null) return entry;
-
-            var json = await proc.StandardOutput.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-
-            if (string.IsNullOrWhiteSpace(json)) return entry;
-
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            // 1. 读取 Format 信息
-            if (root.TryGetProperty("format", out var formatElem))
-            {
-                if (formatElem.TryGetProperty("duration", out var durElem) &&
-                    double.TryParse(durElem.GetString(), System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var durSec))
-                {
-                    entry.Duration = (int)Math.Round(durSec);
-                }
-
-                if (formatElem.TryGetProperty("tags", out var tagsElem))
-                {
-                    foreach (var prop in tagsElem.EnumerateObject())
-                    {
-                        var key = prop.Name;
-                        var val = prop.Value.GetString()?.Trim() ?? "";
-                        if (string.IsNullOrEmpty(val)) continue;
-
-                        if (string.Equals(key, "title", StringComparison.OrdinalIgnoreCase))
-                        {
-                            entry.Title = val;
-                        }
-                        else if (string.Equals(key, "artist", StringComparison.OrdinalIgnoreCase))
-                        {
-                            entry.Artist = val;
-                        }
-                        else if (string.Equals(key, "album", StringComparison.OrdinalIgnoreCase))
-                        {
-                            entry.Album = val;
-                        }
-                        else if (string.Equals(key, "lyrics", StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(key, "unsyncedlyrics", StringComparison.OrdinalIgnoreCase) ||
-                                 string.Equals(key, "USLT", StringComparison.OrdinalIgnoreCase))
-                        {
-                            entry.EmbeddedLyrics = val;
-                            entry.HasEmbeddedLyrics = true;
-                        }
-                    }
-                }
-
-                // 计算音质
-                if (formatElem.TryGetProperty("bit_rate", out var brElem) &&
-                    long.TryParse(brElem.GetString(), out var bitRate))
-                {
-                    entry.Quality = DetermineQualityFromBitRate(fileInfo.Extension, bitRate);
-                }
+                entry.Title = track.Title.Trim();
             }
 
-            // 2. 检测是否存在内嵌图片流 (Video/Attached Pic)
-            if (root.TryGetProperty("streams", out var streamsElem) && streamsElem.ValueKind == JsonValueKind.Array)
+            if (!string.IsNullOrWhiteSpace(track.Artist))
             {
-                foreach (var stream in streamsElem.EnumerateArray())
+                entry.Artist = track.Artist.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(track.Album))
+            {
+                entry.Album = track.Album.Trim();
+            }
+
+            if (track.Duration > 0)
+            {
+                entry.Duration = track.Duration;
+            }
+
+            entry.HasEmbeddedCover = track.EmbeddedPictures != null && track.EmbeddedPictures.Count > 0;
+
+            if (track.Lyrics != null && track.Lyrics.Count > 0)
+            {
+                foreach (var lyric in track.Lyrics)
                 {
-                    if (stream.TryGetProperty("codec_type", out var ctElem) &&
-                        ctElem.GetString() == "video")
+                    if (!string.IsNullOrWhiteSpace(lyric.UnsynchronizedLyrics))
                     {
-                        entry.HasEmbeddedCover = true;
+                        entry.EmbeddedLyrics = lyric.UnsynchronizedLyrics;
+                        entry.HasEmbeddedLyrics = true;
                         break;
                     }
                 }
             }
+
+            int bitRateKbps = (int)Math.Round((double)track.Bitrate);
+            if (bitRateKbps > 0)
+            {
+                entry.Quality = DetermineQualityFromBitRate(fileInfo.Extension, bitRateKbps, track.SampleRate, track.BitDepth);
+            }
         }
         catch (Exception ex)
         {
-            AppLogger.Warn("LocalMusicService", $"ffprobe failed for {filePath}: {ex.Message}");
+            AppLogger.Warn("LocalMusicService", $"ATL.NET extraction failed for {filePath}: {ex.Message}");
         }
 
         return entry;
@@ -455,18 +416,22 @@ public static class LocalMusicService
         };
     }
 
-    private static string DetermineQualityFromBitRate(string ext, long bitRate)
+    private static string DetermineQualityFromBitRate(string ext, int bitRateKbps, double sampleRate = 0, int bitDepth = 0)
     {
         var lower = ext.ToLowerInvariant();
         if (lower is ".flac" or ".ape" or ".wav")
         {
-            return bitRate > 2000000 ? "Hi-Res" : "SQ 无损";
+            if (bitDepth > 16 || sampleRate > 48000 || bitRateKbps > 2000)
+            {
+                return "Hi-Res";
+            }
+            return "SQ 无损";
         }
-        if (bitRate >= 300000)
+        if (bitRateKbps >= 300)
         {
             return "HQ 320k";
         }
-        if (bitRate >= 190000)
+        if (bitRateKbps >= 190)
         {
             return "HQ 192k";
         }
@@ -513,7 +478,7 @@ public static class LocalMusicService
         {
             // 若缓存中未记录，再次轻量提取
             var fi = new FileInfo(song.LocalFilePath);
-            var entry = await ExtractMetadataWithFfprobeAsync(song.LocalFilePath, fi);
+            var entry = ExtractMetadataWithAtl(song.LocalFilePath, fi);
             embeddedLyrics = entry.EmbeddedLyrics;
         }
 
@@ -542,32 +507,28 @@ public static class LocalMusicService
             return targetPng;
         }
 
-        // 1. 尝试从音频文件中提取内嵌封面
-        var tempExtractJpg = Path.Combine(s_cacheDir, $"raw_{md5}.jpg");
+        // 1. 尝试使用 ATL.NET 内存直读从音频文件中提取内嵌封面
+        var tempExtractImg = Path.Combine(s_cacheDir, $"raw_{md5}.tmp");
         try
         {
-            var psi = new ProcessStartInfo
+            var track = new ATL.Track(song.LocalFilePath);
+            if (track.EmbeddedPictures != null && track.EmbeddedPictures.Count > 0)
             {
-                FileName = "ffmpeg",
-                Arguments = $"-y -i \"{song.LocalFilePath}\" -an -vcodec copy \"{tempExtractJpg}\"",
-                CreateNoWindow = true,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-            using var proc = Process.Start(psi);
-            if (proc != null)
-            {
-                await proc.WaitForExitAsync();
-                if (proc.ExitCode == 0 && File.Exists(tempExtractJpg) && new FileInfo(tempExtractJpg).Length > 1024)
+                var pic = track.EmbeddedPictures[0];
+                if (pic.PictureData != null && pic.PictureData.Length > 0)
                 {
-                    var result = await TerminalImageHelper.EnsureLocalImageProcessedAsync(tempExtractJpg, md5);
-                    try { File.Delete(tempExtractJpg); } catch {}
+                    await File.WriteAllBytesAsync(tempExtractImg, pic.PictureData);
+                    var result = await TerminalImageHelper.EnsureLocalImageProcessedAsync(tempExtractImg, md5);
+                    try { File.Delete(tempExtractImg); } catch {}
                     if (!string.IsNullOrEmpty(result)) return result;
                 }
             }
         }
-        catch {}
+        catch (Exception ex)
+        {
+            AppLogger.Warn("LocalMusicService", $"Failed to extract embedded cover via ATL for {song.LocalFilePath}: {ex.Message}");
+            try { if (File.Exists(tempExtractImg)) File.Delete(tempExtractImg); } catch {}
+        }
 
         // 2. 回退：查找同目录下的常见封面命名
         var dir = Path.GetDirectoryName(song.LocalFilePath);
