@@ -342,21 +342,25 @@ public static partial class TerminalImageHelper
     {
         if (song == null) return null;
 
-        if (song.IsLocal || song.IsWebDav)
+        if (song.IsWebDav)
         {
-            var filePath = song.LocalFilePath;
-            if (string.IsNullOrEmpty(filePath) && song.IsWebDav && !string.IsNullOrEmpty(song.WebDavHref))
+            var server = QQMusic.Tui.Services.WebDavService.GetActiveServer();
+            if (server != null)
             {
-                var server = QQMusic.Tui.Services.WebDavService.GetActiveServer();
-                if (server != null)
+                var wdCover = await QQMusic.Tui.Services.WebDavService.EnsureCoverAsync(server, song).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(wdCover))
                 {
-                    filePath = QQMusic.Tui.Services.WebDavService.GetLocalCachePath(server, song.WebDavHref);
+                    return wdCover;
                 }
             }
+        }
 
+        if (song.IsLocal)
+        {
+            var filePath = song.LocalFilePath;
             if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
             {
-                return await QQMusic.Tui.Services.LocalMusicService.EnsureCoverAsync(song with { LocalFilePath = filePath });
+                return await QQMusic.Tui.Services.LocalMusicService.EnsureCoverAsync(song with { LocalFilePath = filePath }).ConfigureAwait(false);
             }
             return null;
         }

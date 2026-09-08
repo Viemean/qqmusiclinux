@@ -3,7 +3,7 @@
 pkgname=qqmusic-tui-bin
 _pkgname=qqmusic-tui
 pkgver=0.1.7
-pkgrel=32
+pkgrel=33
 pkgdesc="Linux terminal QQ Music player (.NET 10 Native AOT pre-built binary package)"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Viemean/qqmusiclinux/tree/tui"

@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using QQMusic.Tui.Api;
 using QQMusic.Tui.Models;
+using QQMusic.Tui.UI;
 using QQMusic.Tui.Utils;
 
 namespace QQMusic.Tui.Services;
@@ -371,5 +372,143 @@ public static partial class WebDavService
         }
 
         return enrichedCount;
+    }
+
+    /// <summary>
+    /// 获取 WebDAV 曲目的封面（支持本地封面缓存直读、已缓存音频直读、轻量 Range 提取内嵌封面、同目录 cover.jpg 及在线匹配）
+    /// </summary>
+    public static async Task<string?> EnsureCoverAsync(WebDavServer server, Song song, CancellationToken ct = default)
+    {
+        if (server == null || string.IsNullOrEmpty(song.WebDavHref)) return null;
+
+        var md5 = ComputeMd5(song.WebDavHref);
+        var cacheKey = $"webdav_{md5}";
+        var targetPng = Path.Combine(CacheManager.CoversDir, $"local_{cacheKey}.png");
+        if (File.Exists(targetPng))
+        {
+            var fi = new FileInfo(targetPng);
+            if (fi.Length > 0)
+            {
+                CacheManager.RecordAccess($"covers/{Path.GetFileName(targetPng)}", fi.Length);
+                return targetPng;
+            }
+        }
+
+        // A. 若本地完整音频已下载缓存，直接通过 LocalMusicService 提取
+        var localAudio = GetLocalCachePath(server, song.WebDavHref);
+        if (File.Exists(localAudio) && new FileInfo(localAudio).Length > 4096)
+        {
+            return await LocalMusicService.EnsureCoverAsync(song with { LocalFilePath = localAudio });
+        }
+
+        // B. 流式未缓存模式：通过 HTTP Range 请求拉取文件头部前 1MB 提取内嵌封面
+        var ext = Path.GetExtension(song.WebDavHref);
+        var tmpHeaderFile = Path.Combine(Path.GetTempPath(), $"webdav_cov_hdr_{Guid.NewGuid():N}{ext}");
+        var tempExtractImg = Path.Combine(CacheManager.CoversDir, $"raw_wd_{md5}.tmp");
+        try
+        {
+            var client = GetHttpClient(server);
+            var uri = BuildFullUri(server, song.WebDavHref);
+            using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+            req.Headers.Range = new RangeHeaderValue(0, 1048575); // 1MB 足够覆盖 ID3v2 APIC 与 FLAC PICTURE 块
+            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (resp.IsSuccessStatusCode || resp.StatusCode == HttpStatusCode.PartialContent)
+            {
+                using (var fs = new FileStream(tmpHeaderFile, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await resp.Content.CopyToAsync(fs, ct).ConfigureAwait(false);
+                }
+
+                if (File.Exists(tmpHeaderFile) && new FileInfo(tmpHeaderFile).Length > 0)
+                {
+                    var track = new ATL.Track(tmpHeaderFile);
+                    if (track.EmbeddedPictures != null && track.EmbeddedPictures.Count > 0)
+                    {
+                        var pic = track.EmbeddedPictures[0];
+                        if (pic.PictureData != null && pic.PictureData.Length > 0)
+                        {
+                            await File.WriteAllBytesAsync(tempExtractImg, pic.PictureData, ct).ConfigureAwait(false);
+                            var result = await TerminalImageHelper.EnsureLocalImageProcessedAsync(tempExtractImg, cacheKey).ConfigureAwait(false);
+                            try { if (File.Exists(tempExtractImg)) File.Delete(tempExtractImg); } catch {}
+                            if (!string.IsNullOrEmpty(result) && File.Exists(result))
+                            {
+                                return result;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Debug("WebDavService", $"Range cover extraction failed for {song.WebDavHref}: {ex.Message}");
+        }
+        finally
+        {
+            try { if (File.Exists(tmpHeaderFile)) File.Delete(tmpHeaderFile); } catch {}
+            try { if (File.Exists(tempExtractImg)) File.Delete(tempExtractImg); } catch {}
+        }
+
+        // C. 回退：查找同目录下的常见封面命名 (cover.jpg, folder.jpg 等)
+        try
+        {
+            var href = song.WebDavHref;
+            var lastSlash = href.LastIndexOf('/');
+            if (lastSlash > 0)
+            {
+                var parentDir = href[..(lastSlash + 1)];
+                string[] candidateNames = ["cover.jpg", "cover.png", "folder.jpg", "front.jpg", "Cover.jpg", "Folder.jpg"];
+                var client = GetHttpClient(server);
+                foreach (var name in candidateNames)
+                {
+                    var remoteCoverHref = parentDir + name;
+                    var coverUri = BuildFullUri(server, remoteCoverHref);
+                    using var headReq = new HttpRequestMessage(HttpMethod.Head, coverUri);
+                    using var headResp = await client.SendAsync(headReq, ct).ConfigureAwait(false);
+                    if (headResp.IsSuccessStatusCode)
+                    {
+                        using var getReq = new HttpRequestMessage(HttpMethod.Get, coverUri);
+                        using var getResp = await client.SendAsync(getReq, ct).ConfigureAwait(false);
+                        if (getResp.IsSuccessStatusCode)
+                        {
+                            var bytes = await getResp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+                            if (bytes.Length > 1024)
+                            {
+                                await File.WriteAllBytesAsync(tempExtractImg, bytes, ct).ConfigureAwait(false);
+                                var result = await TerminalImageHelper.EnsureLocalImageProcessedAsync(tempExtractImg, cacheKey).ConfigureAwait(false);
+                                try { if (File.Exists(tempExtractImg)) File.Delete(tempExtractImg); } catch {}
+                                if (!string.IsNullOrEmpty(result) && File.Exists(result))
+                                {
+                                    return result;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch {}
+
+        // D. 回退：通过歌曲标题与歌手尝试拉取在线专辑封面
+        try
+        {
+            var cleanTitle = CleanTrackNumberPrefix(song.Title);
+            if (!string.IsNullOrWhiteSpace(cleanTitle))
+            {
+                var query = string.IsNullOrWhiteSpace(song.Artist) || song.Artist == "未知歌手" ? cleanTitle : $"{cleanTitle} {song.Artist}";
+                var matches = await QqMusicApi.SearchAsync(query, 1, 3, ct).ConfigureAwait(false);
+                if (matches.Count > 0 && !string.IsNullOrWhiteSpace(matches[0].AlbumMid))
+                {
+                    var onlineCover = await TerminalImageHelper.EnsureAlbumCoverAsync(matches[0].AlbumMid).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(onlineCover) && File.Exists(onlineCover))
+                    {
+                        return onlineCover;
+                    }
+                }
+            }
+        }
+        catch {}
+
+        return null;
     }
 }

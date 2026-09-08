@@ -26,11 +26,13 @@ public sealed partial class MainWindow
     private CancellationTokenSource? _playbackCts;
     private long _playbackSessionId;
 
-    // 收听满 30 秒门限流式持久化缓存状态机
+    // 物理真实累计收听满 30 秒门限流式持久化缓存状态机
     private bool _hasTriggeredCacheForCurrentSong;
     private long _currentCacheSessionId;
     private CancellationTokenSource? _cachingCts;
     private string? _lastResolvedPlayUrl;
+    private double _accumulatedPlaySeconds;
+    private double _lastProgressSec;
 
     private Task PlaySongAsync(Song song) => PlaySongAsync(song, 0);
 
@@ -59,6 +61,8 @@ public sealed partial class MainWindow
         _cachingCts = new CancellationTokenSource();
         _hasTriggeredCacheForCurrentSong = false;
         _lastResolvedPlayUrl = null;
+        _accumulatedPlaySeconds = 0.0;
+        _lastProgressSec = startPosition;
 
         bool IsStale() => ct.IsCancellationRequested || Interlocked.Read(ref _playbackSessionId) != currentSession;
 
@@ -503,10 +507,22 @@ public sealed partial class MainWindow
             _mprisService.UpdateSong(_activeSong);
         }
 
-        // 收听满 30 秒门限检测：若收听超过 30 秒（或超短音频收听超 80%），自动触发后台完整持久化缓存
+        // 累计真实物理播放时长：仅在播放状态、进度向前自然推移（排除拖拽快进/跳跃）时累加
+        if (_player.IsPlaying && currentSec > _lastProgressSec)
+        {
+            double delta = currentSec - _lastProgressSec;
+            if (delta > 0 && delta <= 1.5)
+            {
+                _accumulatedPlaySeconds += delta;
+            }
+        }
+        _lastProgressSec = currentSec;
+
+        // 真实收听满 30 秒物理时长门限检测（或超短音频收听超 80%）
         if (!_hasTriggeredCacheForCurrentSong && !_activeSong.IsLocal)
         {
-            bool reachThreshold = currentSec >= 30.0 || (_activeSong.Duration > 0 && _activeSong.Duration < 30.0 && currentSec >= _activeSong.Duration * 0.8);
+            bool reachThreshold = _accumulatedPlaySeconds >= 30.0 ||
+                (_activeSong.Duration > 0 && _activeSong.Duration < 30.0 && _accumulatedPlaySeconds >= _activeSong.Duration * 0.8);
             if (reachThreshold)
             {
                 _hasTriggeredCacheForCurrentSong = true;
