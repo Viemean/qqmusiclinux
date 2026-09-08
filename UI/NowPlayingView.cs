@@ -41,6 +41,7 @@ public sealed class NowPlayingView : View
     private readonly ThinScrollBarView _lyricScrollBar;
     private readonly Label _transBtn;
     private readonly Label _immersiveBtn;
+    private readonly Label _matchLyricBtn;
 
     private Song? _currentSong;
     private string? _coverFilePath;
@@ -51,6 +52,7 @@ public sealed class NowPlayingView : View
     private long _lastUserLyricScrollTick;
     private bool _showTranslation = true;
     private bool _isImmersiveMode = false;
+    private bool _isLyricMatched = false;
     private long _lastImmersiveActivityTick = 0;
     private long _lastInteractiveActivityTick = 0;
     private bool _isInteractiveHighlightSuppressed = false;
@@ -61,14 +63,17 @@ public sealed class NowPlayingView : View
     private object? _resizeTimerToken;
     private object? _lyricResizeTimerToken;
     private long _lastTransClickTicks;
+    private long _lastMatchClickTicks;
 
     public event Action? BackRequested;
     public event Action<TimeSpan>? SeekRequested;
     public event Action? ToggleTranslationRequested;
     public event Action? ToggleImmersiveRequested;
+    public event Action? MatchLyricRequested;
     public event Action<Song>? ArtistDrilldownRequested;
     public event Action<Song>? AlbumDrilldownRequested;
     public event Action? FocusControlBarRequested;
+    public event Action? LoginRequested;
     public event Action? FocusChangedNotification;
     public event Action? ShowQueueRequested;
 
@@ -315,16 +320,19 @@ public sealed class NowPlayingView : View
         };
         _lyricContainer.Add(_lyricScrollBar);
 
-        // 歌词区右下角单字“译”与“沉浸”按钮
+        // 歌词区右下角按钮排布（严格物理对齐）：
+        // 上行：            [Y] 匹配
+        // 下行：[T]译    [P] 全屏
         _transBtn = new Label
         {
-            Text = "译",
-            X = Pos.AnchorEnd(8),
+            Text = "[T]译",
+            X = Pos.AnchorEnd(16),
             Y = Pos.AnchorEnd(1),
-            Width = 2,
+            Width = 5,
             Height = 1,
             CanFocus = false,
-            TabStop = TabBehavior.NoStop
+            TabStop = TabBehavior.NoStop,
+            HotKeySpecifier = (Rune)0
         };
         _transBtn.MouseEvent += (s, m) =>
         {
@@ -344,13 +352,14 @@ public sealed class NowPlayingView : View
 
         _immersiveBtn = new Label
         {
-            Text = "沉浸",
-            X = Pos.AnchorEnd(5),
+            Text = "[P] 全屏",
+            X = Pos.AnchorEnd(9),
             Y = Pos.AnchorEnd(1),
-            Width = 4,
+            Width = 8,
             Height = 1,
             CanFocus = false,
-            TabStop = TabBehavior.NoStop
+            TabStop = TabBehavior.NoStop,
+            HotKeySpecifier = (Rune)0
         };
         _immersiveBtn.MouseEvent += (s, m) =>
         {
@@ -363,9 +372,38 @@ public sealed class NowPlayingView : View
             }
         };
 
-        _lyricContainer.Add(_transBtn, _immersiveBtn);
+        _matchLyricBtn = new Label
+        {
+            Text = "[Y] 匹配",
+            X = Pos.AnchorEnd(9),
+            Y = Pos.AnchorEnd(2),
+            Width = 8,
+            Height = 1,
+            CanFocus = false,
+            TabStop = TabBehavior.NoStop,
+            HotKeySpecifier = (Rune)0,
+            Visible = false
+        };
+        _matchLyricBtn.MouseEvent += (s, m) =>
+        {
+            TriggerImmersiveActivity();
+            TriggerInteractiveActivity();
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked))
+            {
+                var now = Environment.TickCount64;
+                if (now - _lastMatchClickTicks > 300)
+                {
+                    _lastMatchClickTicks = now;
+                    MatchLyricRequested?.Invoke();
+                }
+                m.Handled = true;
+            }
+        };
+
+        _lyricContainer.Add(_transBtn, _immersiveBtn, _matchLyricBtn);
         UpdateTransButtonHighlight();
         UpdateImmersiveButtonHighlight();
+        UpdateMatchLyricButtonHighlight();
 
         Add(_lyricContainer);
 
@@ -390,9 +428,30 @@ public sealed class NowPlayingView : View
                 return;
             }
 
+            if (ch == 'Y')
+            {
+                MatchLyricRequested?.Invoke();
+                k.Handled = true;
+                return;
+            }
+
+            if (ch == 'T')
+            {
+                ToggleTranslationRequested?.Invoke();
+                k.Handled = true;
+                return;
+            }
+
             if (ch == 'P')
             {
                 ToggleImmersiveRequested?.Invoke();
+                k.Handled = true;
+                return;
+            }
+
+            if (ch == 'U')
+            {
+                LoginRequested?.Invoke();
                 k.Handled = true;
                 return;
             }
@@ -508,9 +567,13 @@ public sealed class NowPlayingView : View
             _songTitleLabel.Text = "";
             _albumLink.SetText("");
             _songInfoContainer.Visible = false;
+            _matchLyricBtn.Visible = false;
             TerminalImageHelper.ClearImages();
             return;
         }
+
+        bool isLocalOrWebDav = song.IsLocal || song.IsWebDav;
+        _matchLyricBtn.Visible = isLocalOrWebDav;
 
         _artistLink.SetText(string.IsNullOrWhiteSpace(song.Artist) ? "未知歌手" : song.Artist);
         _songTitleLabel.Text = song.Title ?? "未知曲目";
@@ -746,25 +809,42 @@ public sealed class NowPlayingView : View
     private void UpdateTransButtonHighlight()
     {
         if (_transBtn == null) return;
-        if (_showTranslation)
+        var color = _showTranslation ? MikuTheme.QqGreenLight : MikuTheme.MikuTextMuted;
+        var attr = new Attribute(color, Color.None);
+        _transBtn.SetScheme(new Scheme
         {
-            _transBtn.SetScheme(new Scheme
-            {
-                Normal = new Attribute(MikuTheme.QqGreenLight, Color.None),
-                Focus = new Attribute(MikuTheme.QqGreenLight, Color.None),
-                HotNormal = new Attribute(MikuTheme.QqGreenLight, Color.None)
-            });
-        }
-        else
-        {
-            _transBtn.SetScheme(new Scheme
-            {
-                Normal = new Attribute(MikuTheme.MikuTextMuted, Color.None),
-                Focus = new Attribute(MikuTheme.MikuTextMuted, Color.None),
-                HotNormal = new Attribute(MikuTheme.MikuTextMuted, Color.None)
-            });
-        }
+            Normal = attr,
+            Focus = attr,
+            HotNormal = attr,
+            HotFocus = attr,
+            Highlight = attr,
+            Disabled = attr
+        });
         _transBtn.SetNeedsDraw();
+    }
+
+    public void SetLyricMatchedState(bool isMatched)
+    {
+        _isLyricMatched = isMatched;
+        UpdateMatchLyricButtonHighlight();
+    }
+
+    private void UpdateMatchLyricButtonHighlight()
+    {
+        if (_matchLyricBtn == null) return;
+        _matchLyricBtn.Text = "[Y] 匹配";
+        var color = _isLyricMatched ? MikuTheme.QqGreenLight : MikuTheme.MikuTextMuted;
+        var attr = new Attribute(color, Color.None);
+        _matchLyricBtn.SetScheme(new Scheme
+        {
+            Normal = attr,
+            Focus = attr,
+            HotNormal = attr,
+            HotFocus = attr,
+            Highlight = attr,
+            Disabled = attr
+        });
+        _matchLyricBtn.SetNeedsDraw();
     }
 
     private void RenderCoverIfVisible()
@@ -861,6 +941,10 @@ public sealed class NowPlayingView : View
             StopImmersiveTimer();
             _transBtn.Visible = true;
             _immersiveBtn.Visible = true;
+            if (_currentSong != null && (_currentSong.IsLocal || _currentSong.IsWebDav))
+            {
+                _matchLyricBtn.Visible = true;
+            }
             _isInteractiveHighlightSuppressed = false;
             // 退出沉浸模式后恢复可选择
             _artistLink.SetInteractiveEnabled(true);
@@ -874,34 +958,32 @@ public sealed class NowPlayingView : View
     private void UpdateImmersiveButtonHighlight()
     {
         if (_immersiveBtn == null) return;
-        if (_isImmersiveMode)
+        var color = _isImmersiveMode ? MikuTheme.QqGreenLight : MikuTheme.MikuTextMuted;
+        var attr = new Attribute(color, Color.None);
+        _immersiveBtn.SetScheme(new Scheme
         {
-            _immersiveBtn.SetScheme(new Scheme
-            {
-                Normal = new Attribute(MikuTheme.QqGreenLight, Color.None),
-                Focus = new Attribute(MikuTheme.QqGreenLight, Color.None),
-                HotNormal = new Attribute(MikuTheme.QqGreenLight, Color.None)
-            });
-        }
-        else
-        {
-            _immersiveBtn.SetScheme(new Scheme
-            {
-                Normal = new Attribute(MikuTheme.MikuTextMuted, Color.None),
-                Focus = new Attribute(MikuTheme.MikuTextMuted, Color.None),
-                HotNormal = new Attribute(MikuTheme.MikuTextMuted, Color.None)
-            });
-        }
+            Normal = attr,
+            Focus = attr,
+            HotNormal = attr,
+            HotFocus = attr,
+            Highlight = attr,
+            Disabled = attr
+        });
         _immersiveBtn.SetNeedsDraw();
     }
 
     public void TriggerImmersiveActivity()
     {
         _lastImmersiveActivityTick = Environment.TickCount64;
-        if (!_transBtn.Visible || !_immersiveBtn.Visible)
+        bool isLocalOrWebDav = _currentSong != null && (_currentSong.IsLocal || _currentSong.IsWebDav);
+        if (!_transBtn.Visible || !_immersiveBtn.Visible || (isLocalOrWebDav && !_matchLyricBtn.Visible))
         {
             _transBtn.Visible = true;
             _immersiveBtn.Visible = true;
+            if (isLocalOrWebDav)
+            {
+                _matchLyricBtn.Visible = true;
+            }
             SetNeedsDraw();
         }
     }
@@ -928,13 +1010,14 @@ public sealed class NowPlayingView : View
             {
                 var now = Environment.TickCount64;
 
-                // 1. 浮动功能按钮（译/沉浸）3 秒无操作自动隐藏
+                // 1. 浮动功能按钮（译/沉浸/匹配）3 秒无操作自动隐藏
                 if (now - _lastImmersiveActivityTick > 3000)
                 {
-                    if (_transBtn.Visible || _immersiveBtn.Visible)
+                    if (_transBtn.Visible || _immersiveBtn.Visible || _matchLyricBtn.Visible)
                     {
                         _transBtn.Visible = false;
                         _immersiveBtn.Visible = false;
+                        _matchLyricBtn.Visible = false;
                         SetNeedsDraw();
                     }
                 }

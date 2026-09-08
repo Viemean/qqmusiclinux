@@ -384,7 +384,39 @@ public static class LocalMusicService
                 {
                     if (!string.IsNullOrWhiteSpace(lyric.UnsynchronizedLyrics))
                     {
-                        entry.EmbeddedLyrics = lyric.UnsynchronizedLyrics;
+                        entry.EmbeddedLyrics = lyric.UnsynchronizedLyrics.Trim();
+                        entry.HasEmbeddedLyrics = true;
+                        break;
+                    }
+
+                    if (lyric.SynchronizedLyrics != null && lyric.SynchronizedLyrics.Count > 0)
+                    {
+                        var sb = new StringBuilder();
+                        foreach (var phase in lyric.SynchronizedLyrics)
+                        {
+                            var ts = TimeSpan.FromMilliseconds(phase.TimestampStart);
+                            sb.AppendLine($"[{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds / 10:D2}]{phase.Text}");
+                        }
+                        var s = sb.ToString().Trim();
+                        if (!string.IsNullOrWhiteSpace(s))
+                        {
+                            entry.EmbeddedLyrics = s;
+                            entry.HasEmbeddedLyrics = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // 检查常用内嵌标签字段（FLAC Vorbis Comment / MP3 ID3 / OGG）
+            if (string.IsNullOrEmpty(entry.EmbeddedLyrics) && track.AdditionalFields != null && track.AdditionalFields.Count > 0)
+            {
+                string[] lyricKeys = ["LYRICS", "UNSYNCEDLYRICS", "USLT", "TEXT", "LYRIC", "SUBTITLE", "UNSYNCED LYRICS", "SYNCEDLYRICS"];
+                foreach (var key in lyricKeys)
+                {
+                    if (track.AdditionalFields.TryGetValue(key, out var val) && !string.IsNullOrWhiteSpace(val))
+                    {
+                        entry.EmbeddedLyrics = val.Trim();
                         entry.HasEmbeddedLyrics = true;
                         break;
                     }
@@ -441,15 +473,19 @@ public static class LocalMusicService
     /// <summary>
     /// 获取本地歌曲的歌词（优先同目录同名 .lrc 文件，其次内嵌歌词）
     /// </summary>
-    public static async Task<List<LyricLine>> GetLyricsAsync(Song song)
+    public static async Task<List<LyricLine>> GetLyricsAsync(Song song, string? fallbackAudioPath = null)
     {
-        if (string.IsNullOrEmpty(song.LocalFilePath) || !File.Exists(song.LocalFilePath))
+        var targetPath = !string.IsNullOrEmpty(song.LocalFilePath) && File.Exists(song.LocalFilePath)
+            ? song.LocalFilePath
+            : fallbackAudioPath;
+
+        if (string.IsNullOrEmpty(targetPath) || !File.Exists(targetPath))
         {
             return [];
         }
 
         // 1. 同名 .lrc 文件检查
-        var lrcPath = Path.ChangeExtension(song.LocalFilePath, ".lrc");
+        var lrcPath = Path.ChangeExtension(targetPath, ".lrc");
         if (File.Exists(lrcPath))
         {
             try
@@ -466,7 +502,7 @@ public static class LocalMusicService
         lock (s_lock)
         {
             var cached = s_config.CachedSongs.Find(s =>
-                string.Equals(s.FilePath, song.LocalFilePath, StringComparison.OrdinalIgnoreCase)
+                string.Equals(s.FilePath, targetPath, StringComparison.OrdinalIgnoreCase)
             );
             if (cached != null && !string.IsNullOrEmpty(cached.EmbeddedLyrics))
             {
@@ -477,8 +513,49 @@ public static class LocalMusicService
         if (string.IsNullOrEmpty(embeddedLyrics))
         {
             // 若缓存中未记录，再次轻量提取
-            var fi = new FileInfo(song.LocalFilePath);
-            var entry = ExtractMetadataWithAtl(song.LocalFilePath, fi);
+            var fi = new FileInfo(targetPath);
+            var entry = ExtractMetadataWithAtl(targetPath, fi);
+            embeddedLyrics = entry.EmbeddedLyrics;
+        }
+
+        if (!string.IsNullOrWhiteSpace(embeddedLyrics))
+        {
+            return LyricParser.ParseSingleLrc(embeddedLyrics);
+        }
+
+        return [];
+    }
+
+    /// <summary>
+    /// 仅获取本地音频文件的内嵌原始歌词（忽略外挂 .lrc 文件，用于可逆撤销恢复）
+    /// </summary>
+    public static async Task<List<LyricLine>> GetEmbeddedLyricsAsync(Song song, string? fallbackAudioPath = null)
+    {
+        var targetPath = !string.IsNullOrEmpty(song.LocalFilePath) && File.Exists(song.LocalFilePath)
+            ? song.LocalFilePath
+            : fallbackAudioPath;
+
+        if (string.IsNullOrEmpty(targetPath) || !File.Exists(targetPath))
+        {
+            return [];
+        }
+
+        string? embeddedLyrics = null;
+        lock (s_lock)
+        {
+            var cached = s_config.CachedSongs.Find(s =>
+                string.Equals(s.FilePath, targetPath, StringComparison.OrdinalIgnoreCase)
+            );
+            if (cached != null && !string.IsNullOrEmpty(cached.EmbeddedLyrics))
+            {
+                embeddedLyrics = cached.EmbeddedLyrics;
+            }
+        }
+
+        if (string.IsNullOrEmpty(embeddedLyrics))
+        {
+            var fi = new FileInfo(targetPath);
+            var entry = ExtractMetadataWithAtl(targetPath, fi);
             embeddedLyrics = entry.EmbeddedLyrics;
         }
 

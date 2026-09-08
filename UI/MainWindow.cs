@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text;
 using Rectangle = System.Drawing.Rectangle;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
@@ -54,8 +55,10 @@ public sealed partial class MainWindow : Window
     private bool _isSearchActive = false;
     private readonly QuickSearchFloatingBar _quickSearchBar;
     private long _lastTransClickTicks;
+    private long _lastMatchClickTicks;
     private readonly Label _lyricTransBtn;
     private readonly Label _lyricImmersiveBtn;
+    private readonly Label _lyricMatchBtn;
     private bool _isImmersiveMode = false;
     private long _lastImmersiveActivityTick = 0;
     private object? _immersiveActivityTimerToken;
@@ -101,6 +104,7 @@ public sealed partial class MainWindow : Window
         AlbumDetail,
         RecentPlay,
         LocalMusic,
+        WebDav,
         Other
     }
     private ViewMode _currentViewMode = ViewMode.Other;
@@ -345,7 +349,8 @@ public sealed partial class MainWindow : Window
             "我的歌单",
             "收藏专辑",
             "最近播放",
-            "本地音乐"
+            "本地音乐",
+            "WebDAV"
         });
         _sidebarFrame.Add(_sidebarList);
         _sidebarFrame.MouseEvent += (s, m) =>
@@ -500,6 +505,14 @@ public sealed partial class MainWindow : Window
                 _currentDrilldownAlbum = null;
                 await LoadLocalMusicAsync();
             }
+            else if (idx == 8)
+            {
+                _isViewingPlaylistsList = false;
+                _currentDrilldownPlaylist = null;
+                _isViewingAlbumsList = false;
+                _currentDrilldownAlbum = null;
+                await LoadWebDavMusicAsync();
+            }
             _songListView.SetFocusToList();
             Application.Invoke(UpdateFrameBorderHighlights);
         };
@@ -637,16 +650,19 @@ public sealed partial class MainWindow : Window
         };
         _lyricFrame.Add(_lyricScrollBar);
 
-        // 歌词界面右下角纯净单字“译”与“沉浸”按钮（通过高亮/暗灰判断是否开启）
+        // 歌词界面右下角按钮排布（严格物理对齐）：
+        // 上行：            [Y] 匹配
+        // 下行：[T]译    [P] 全屏
         _lyricTransBtn = new Label
         {
-            Text = "译",
-            X = Pos.AnchorEnd(8),
+            Text = "[T]译",
+            X = Pos.AnchorEnd(16),
             Y = Pos.AnchorEnd(1),
-            Width = 2,
+            Width = 5,
             Height = 1,
             CanFocus = false,
-            TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop
+            TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop,
+            HotKeySpecifier = (Rune)0
         };
         _lyricTransBtn.MouseEvent += (s, m) =>
         {
@@ -661,18 +677,17 @@ public sealed partial class MainWindow : Window
                 m.Handled = true;
             }
         };
-        _lyricFrame.Add(_lyricTransBtn);
-        UpdateTranslationButtonHighlight();
 
         _lyricImmersiveBtn = new Label
         {
-            Text = "沉浸",
-            X = Pos.AnchorEnd(5),
+            Text = "[P] 全屏",
+            X = Pos.AnchorEnd(9),
             Y = Pos.AnchorEnd(1),
-            Width = 4,
+            Width = 8,
             Height = 1,
             CanFocus = false,
-            TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop
+            TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop,
+            HotKeySpecifier = (Rune)0
         };
         _lyricImmersiveBtn.MouseEvent += (s, m) =>
         {
@@ -682,8 +697,37 @@ public sealed partial class MainWindow : Window
                 m.Handled = true;
             }
         };
-        _lyricFrame.Add(_lyricImmersiveBtn);
+
+        _lyricMatchBtn = new Label
+        {
+            Text = "[Y] 匹配",
+            X = Pos.AnchorEnd(9),
+            Y = Pos.AnchorEnd(2),
+            Width = 8,
+            Height = 1,
+            CanFocus = false,
+            TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop,
+            HotKeySpecifier = (Rune)0,
+            Visible = false
+        };
+        _lyricMatchBtn.MouseEvent += async (s, m) =>
+        {
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked))
+            {
+                var now = Environment.TickCount64;
+                if (now - _lastMatchClickTicks > 300)
+                {
+                    _lastMatchClickTicks = now;
+                    await MatchOrRestoreLyricAsync();
+                }
+                m.Handled = true;
+            }
+        };
+
+        _lyricFrame.Add(_lyricTransBtn, _lyricImmersiveBtn, _lyricMatchBtn);
+        UpdateTranslationButtonHighlight();
         UpdateImmersiveButtonHighlight();
+        UpdateLyricMatchButtonHighlight();
 
         _artistAlbumDetailView = new ArtistAlbumDetailView
         {
@@ -754,7 +798,7 @@ public sealed partial class MainWindow : Window
             var lastSong = UserSession.Current.LastPlayedSong;
             _activeSong = lastSong;
             _controlBar.SetCurrentSong(lastSong);
-            _controlBar.SetLocalMode(lastSong.IsLocal);
+            _controlBar.SetLocalMode(lastSong.IsLocal || lastSong.IsWebDav);
             _controlBar.UpdateQuality(AudioQualityHelper.GetBadge(_actualQualityTier));
             if (lastSong.Duration > 0 && UserSession.Current.LastPlaybackPositionSeconds > 0)
             {
@@ -769,6 +813,7 @@ public sealed partial class MainWindow : Window
                 _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
                 _standaloneWebServer.BroadcastState("sync");
             }
+            UpdateLyricMatchButtonHighlight();
         }
         _controlBar.FavoriteClicked += async () =>
         {
@@ -778,9 +823,9 @@ public sealed partial class MainWindow : Window
                 _controlBar.UpdateStatus("[操作提示] 当前暂无播放曲目，请先选择歌曲或点播");
                 return;
             }
-            if (targetSong.IsLocal)
+            if (targetSong.IsLocal || targetSong.IsWebDav)
             {
-                _controlBar.UpdateStatus("[本地音乐] 本地曲目不支持在线收藏");
+                _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目不支持在线收藏");
                 return;
             }
             await ToggleSongFavoriteAsync(targetSong);
@@ -790,7 +835,7 @@ public sealed partial class MainWindow : Window
         // 底部快捷键操作指南（独立放置在控制栏UI方框下方最底行，干净平整无边框干扰）
         _hotkeyHintLabel = new Label
         {
-            Text = " [V]播放界面  [P]沉浸  [O]播放顺序  [N]插队  [E]队列  [G]过滤  [S]收藏  [T]翻译  [/]搜索  [J]上一首  [L]下一首  [M]静音  [R]识曲  [W]Web",
+            Text = " [V]播放界面  [U]登录  [O]播放顺序  [N]插队  [E]队列  [G]过滤  [S]收藏  [/]搜索  [J]上一首  [L]下一首  [M]静音  [R]识曲  [W]Web",
             X = 0,
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
@@ -897,6 +942,8 @@ public sealed partial class MainWindow : Window
             Application.Invoke(UpdateFrameBorderHighlights);
         };
         _nowPlayingView.ShowQueueRequested += ShowQueueDrawerDialog;
+        _nowPlayingView.MatchLyricRequested += async () => await MatchOrRestoreLyricAsync();
+        _nowPlayingView.LoginRequested += ShowLoginDialog;
         Add(_nowPlayingView);
         _aodView = new AodView
         {
@@ -1191,6 +1238,46 @@ public sealed partial class MainWindow : Window
                 }
             }
 
+            if (_currentViewMode == ViewMode.WebDav && !_isSearchActive)
+            {
+                if (c == 'F')
+                {
+                    k.Handled = true;
+                    ShowWebdavManageDialog();
+                    return;
+                }
+                if (c == 'D')
+                {
+                    k.Handled = true;
+                    await ToggleWebDavViewModeAsync();
+                    return;
+                }
+                if (c == 'A')
+                {
+                    k.Handled = true;
+                    await ImportCurrentWebDavFolderAsync();
+                    return;
+                }
+                if (c == 'R')
+                {
+                    k.Handled = true;
+                    await RefreshWebDavAsync();
+                    return;
+                }
+                if (c == 'S')
+                {
+                    k.Handled = true;
+                    await ScanWebDavMetadataAsync();
+                    return;
+                }
+                if (k == Key.Backspace)
+                {
+                    k.Handled = true;
+                    await NavigateUpWebDavFolderAsync();
+                    return;
+                }
+            }
+
             if (c == 'Q')
             {
                 k.Handled = true;
@@ -1261,7 +1348,10 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            if (c == 'U')
+            bool isU = c == 'U' || k == Key.U || k == Key.U.WithShift ||
+                       k.ToString().Equals("u", StringComparison.OrdinalIgnoreCase) ||
+                       k.ToString().Equals("Key.U", StringComparison.OrdinalIgnoreCase);
+            if (isU)
             {
                 k.Handled = true;
                 ShowLoginDialog();
@@ -1295,6 +1385,13 @@ public sealed partial class MainWindow : Window
             {
                 k.Handled = true;
                 ToggleQuickSearch();
+                return;
+            }
+
+            if (c == 'Y')
+            {
+                k.Handled = true;
+                await MatchOrRestoreLyricAsync();
                 return;
             }
 
@@ -1941,7 +2038,7 @@ public sealed partial class MainWindow : Window
         _recognizeBtn.Visible = !enable;
         _webBtn.Visible = !enable;
 
-        // 2. 下方控制栏与快捷键提示栏显隐
+        // 2. 下方控制栏与快捷栏显隐
         _controlBar.Visible = !enable;
         _hotkeyHintLabel.Visible = !enable;
 
@@ -1993,10 +2090,15 @@ public sealed partial class MainWindow : Window
         _lastImmersiveActivityTick = Environment.TickCount64;
         if (_isImmersiveMode)
         {
-            if (!_lyricTransBtn.Visible || !_lyricImmersiveBtn.Visible)
+            bool isLocalOrWebDav = _activeSong != null && (_activeSong.IsLocal || _activeSong.IsWebDav);
+            if (!_lyricTransBtn.Visible || !_lyricImmersiveBtn.Visible || (isLocalOrWebDav && !_lyricMatchBtn.Visible))
             {
                 _lyricTransBtn.Visible = true;
                 _lyricImmersiveBtn.Visible = true;
+                if (isLocalOrWebDav)
+                {
+                    _lyricMatchBtn.Visible = true;
+                }
                 _lyricFrame.SetNeedsDraw();
             }
         }
@@ -2012,10 +2114,11 @@ public sealed partial class MainWindow : Window
             {
                 if (Environment.TickCount64 - _lastImmersiveActivityTick > 3000)
                 {
-                    if (_lyricTransBtn.Visible || _lyricImmersiveBtn.Visible)
+                    if (_lyricTransBtn.Visible || _lyricImmersiveBtn.Visible || _lyricMatchBtn.Visible)
                     {
                         _lyricTransBtn.Visible = false;
                         _lyricImmersiveBtn.Visible = false;
+                        _lyricMatchBtn.Visible = false;
                         _lyricFrame.SetNeedsDraw();
                     }
                 }
@@ -2033,27 +2136,41 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void UpdateLyricMatchButtonHighlight()
+    {
+        if (_lyricMatchBtn == null) return;
+        bool isLocalOrWebDav = _activeSong != null && (_activeSong.IsLocal || _activeSong.IsWebDav);
+        _lyricMatchBtn.Visible = isLocalOrWebDav;
+        _lyricMatchBtn.Text = "[Y] 匹配";
+        bool isMatched = IsCurrentSongLyricMatched(_activeSong);
+        var color = isMatched ? MikuTheme.QqGreenLight : MikuTheme.MikuTextMuted;
+        var attr = new Terminal.Gui.Drawing.Attribute(color, Color.None);
+        _lyricMatchBtn.SetScheme(new Scheme
+        {
+            Normal = attr,
+            Focus = attr,
+            HotNormal = attr,
+            HotFocus = attr,
+            Highlight = attr,
+            Disabled = attr
+        });
+        _lyricMatchBtn.SetNeedsDraw();
+    }
+
     private void UpdateImmersiveButtonHighlight()
     {
         if (_lyricImmersiveBtn == null) return;
-        if (_isImmersiveMode)
+        var color = _isImmersiveMode ? MikuTheme.QqGreenLight : MikuTheme.MikuTextMuted;
+        var attr = new Terminal.Gui.Drawing.Attribute(color, Color.None);
+        _lyricImmersiveBtn.SetScheme(new Scheme
         {
-            _lyricImmersiveBtn.SetScheme(new Scheme
-            {
-                Normal = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenLight, Color.None),
-                Focus = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenLight, Color.None),
-                HotNormal = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenLight, Color.None)
-            });
-        }
-        else
-        {
-            _lyricImmersiveBtn.SetScheme(new Scheme
-            {
-                Normal = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Color.None),
-                Focus = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Color.None),
-                HotNormal = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Color.None)
-            });
-        }
+            Normal = attr,
+            Focus = attr,
+            HotNormal = attr,
+            HotFocus = attr,
+            Highlight = attr,
+            Disabled = attr
+        });
         _lyricImmersiveBtn.SetNeedsDraw();
     }
 
@@ -2402,10 +2519,12 @@ public sealed partial class MainWindow : Window
         _userStatusBtn.Visible = false;
         _recognizeBtn.Visible = false;
         _webBtn.Visible = false;
+        _hotkeyHintLabel.Visible = false;
 
         _nowPlayingView.SetSong(_activeSong, AudioQualityHelper.GetBadge(_actualQualityTier));
         _nowPlayingView.SetLyrics(_currentLyrics, _showTranslation);
         _nowPlayingView.SetTranslationState(_showTranslation);
+        _nowPlayingView.SetLyricMatchedState(IsCurrentSongLyricMatched(_activeSong));
         _nowPlayingView.SetImmersiveState(_isImmersiveMode);
         _nowPlayingView.OnActivated();
         SetNeedsDraw();
@@ -2424,10 +2543,12 @@ public sealed partial class MainWindow : Window
         _userStatusBtn.Visible = !_isImmersiveMode;
         _recognizeBtn.Visible = !_isImmersiveMode;
         _webBtn.Visible = !_isImmersiveMode;
+        _hotkeyHintLabel.Visible = !_isImmersiveMode;
 
         _isSearchActive = false;
         _songListView.SetFocusToList();
         UpdateFrameBorderHighlights();
+        UpdateLyricMatchButtonHighlight();
         if (_artistAlbumDetailView.Visible)
         {
             _artistAlbumDetailView.OnActivated();
@@ -2548,6 +2669,10 @@ public sealed partial class MainWindow : Window
         else if (_currentDrilldownAlbum != null)
         {
             await LoadFavoriteAlbumsAsync();
+        }
+        else if (_currentViewMode == ViewMode.WebDav && !_isWebDavFlatMode && _webDavPathHistory.Count > 0)
+        {
+            await NavigateUpWebDavFolderAsync();
         }
         else
         {

@@ -104,24 +104,24 @@
 
 ### 3. 全新功能构建 (New Features)
 
-- [ ] **[Feat-01] WebDAV 远程音乐库与目录浏览**
-  - [ ] 编写 `Services/WebDavService.cs`：基于原生 `HttpClient` 发送 `PROPFIND`，通过 `XDocument` 解析目录树，支持跳过自签名证书。
-  - [ ] 编写 `UI/WebdavManageDialog.cs`：站点新增/修改/测试连接模态弹窗。
-  - [ ] 导航栏装配与视图模式流转（`ViewMode.WebDav`）：
+- [x] **[Feat-01] WebDAV 远程音乐库与目录浏览**
+  - [x] 编写 `Services/WebDavService.cs`：基于原生 `HttpClient` 发送 `PROPFIND`，通过 `XDocument` 解析目录树，支持跳过自签名证书。
+  - [x] 编写 `UI/WebdavManageDialog.cs`：站点新增/修改/测试连接模态弹窗。
+  - [x] 导航栏装配与视图模式流转（`ViewMode.WebDav`）：
     - 界面私有快捷键：`F`（管理站点）、`A`（导入当前目录至曲库）、`D`（目录树与平铺曲库无缝轮转）、`R`（增量刷新）。
     - 列表标题栏动态展示对应模式的按键提示（完全对标本地音乐规范）。
-  - [ ] 接入 `AudioCacheService` 边播边存，向 GStreamer/D-Bus 传递本地缓存路径，彻底防止 NAS 密码在 D-Bus 广播中泄露。
+  - [x] 接入 `AudioCacheService` 边播边存，向 GStreamer/D-Bus 传递本地缓存路径，彻底防止 NAS 密码在 D-Bus 广播中泄露。
 - [x] **[Feat-02] 主列表内即时查找与行去重跳转 (G 键浮窗)**
   - [x] 全局单键绑定：在 `MainWindow.cs` 全局按键中捕获 `c == 'G'` 唤出/收起浮动查找窗。
   - [x] 悬浮居中面板装配：宽 52 列、高 3 行，翡翠绿半透明边框，内置 `TextField` 与匹配计数 `[ X / Y ]`。
   - [x] 行粒度去重算法：以歌曲条目行索引（`Row Index`）为唯一录入单位，遍历比对 `Title || Artist || Album`，单行内多字段命中绝不重复计次。
   - [x] 连续 Enter 环形跳转状态机：首次 Enter 定位第一项，后续 Enter 顺序跳转并在末尾折返，`Shift+Enter`/`Up` 反向跳跃，`Esc` 退出保留光标位置。
   - [x] 视口居中与平滑定位联动。
-- [ ] **[Feat-03] 本地与 WebDAV 在线歌词智能匹配与升级 (Y 键)**
-  - [ ] 按钮装配：大播放界面（`NowPlayingView.cs`）沉浸按钮旁常驻放置 `[ 匹配 (Y) ]`（仅本地/WebDAV 播放时显示）。
-  - [ ] 精简检索词：仅以 `"{song.Title} {song.Artist}"` 检索，排除不规范 `Album` 字段干扰。
-  - [ ] 核心防误匹配机制：比对候选歌曲时长与本地真实时长，优先匹配时长误差在 **$\pm 3\text{s}$ 以内** 的项；非 Live 歌曲自动过滤现场/演唱会版候选项。
-  - [ ] 本地缓存持久化与可逆撤销（支持再次按 `Y` 恢复文件内嵌原始歌词）。
+- [x] **[Feat-03] 本地与 WebDAV 在线歌词智能匹配与升级 (Y 键)**
+  - [x] 按钮装配：大播放界面（`NowPlayingView.cs`）沉浸按钮旁常驻放置 `[ 匹配 (Y) ]`（仅本地/WebDAV 播放时显示）。
+  - [x] 精简检索词：仅以 `"{song.Title} {song.Artist}"` 检索，排除不规范 `Album` 字段干扰。
+  - [x] 核心防误匹配机制：比对候选歌曲时长与本地真实时长，优先匹配时长误差在 **$\pm 3\text{s}$ 以内** 的项；非 Live 歌曲自动过滤现场/演唱会版候选项。
+  - [x] 本地缓存持久化与可逆撤销（支持再次按 `Y` 恢复文件内嵌原始歌词）。
 - [x] **[Feat-04] 插队播放 (Play Next) 与播放队列抽屉 (Queue Drawer)**
   - [x] 在列表条目上按快捷键 `N`，将选定歌曲直接插队至当前播放队列的下一顺位。
   - [x] 呼出独立播放队列抽屉，支持查看后续待播歌曲清单与移除指定条目。

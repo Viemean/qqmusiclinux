@@ -47,13 +47,13 @@ public sealed partial class MainWindow
             });
         }
 
-        // 联动底栏收藏状态与本地模式
-        var isFav = !song.IsLocal && ((!string.IsNullOrEmpty(song.Mid) && _favoriteSongMids.Contains(song.Mid)) ||
+        // 联动底栏收藏状态与本地/WebDAV模式
+        var isFav = !song.IsLocal && !song.IsWebDav && ((!string.IsNullOrEmpty(song.Mid) && _favoriteSongMids.Contains(song.Mid)) ||
                     (song.Id > 0 && _favoriteSongIds.Contains(song.Id)));
         Application.Invoke(() =>
         {
             _controlBar.SetCurrentSong(song);
-            _controlBar.SetLocalMode(song.IsLocal);
+            _controlBar.SetLocalMode(song.IsLocal || song.IsWebDav);
             _controlBar.SetFavoriteStatus(isFav);
             _aodView.UpdateSong(song);
         });
@@ -89,7 +89,62 @@ public sealed partial class MainWindow
         string? playUrl;
         List<LyricLine> lyrics;
 
-        if (song.IsLocal)
+        if (song.IsWebDav)
+        {
+            var server = WebDavService.GetActiveServer();
+            if (server != null && !string.IsNullOrEmpty(song.WebDavHref))
+            {
+                Application.Invoke(() =>
+                {
+                    _controlBar.UpdateStatus($"[WebDAV] 正在连接/缓冲音频: {song.Title} ...");
+                });
+                playUrl = await WebDavService.GetOrDownloadAudioAsync(server, song.WebDavHref, prog =>
+                {
+                    Application.Invoke(() => _controlBar.UpdateStatus(prog));
+                });
+
+                if (!string.IsNullOrEmpty(playUrl) && File.Exists(playUrl))
+                {
+                    // 通过 ATL.NET 从落盘音频中提取真实内嵌元数据（歌名、歌手、专辑、真实总时长、音质规格）
+                    song = WebDavService.EnrichSongMetadata(server, song, playUrl);
+                }
+            }
+            else
+            {
+                playUrl = song.LocalFilePath;
+                if (!string.IsNullOrEmpty(playUrl) && File.Exists(playUrl) && server != null)
+                {
+                    song = WebDavService.EnrichSongMetadata(server, song, playUrl);
+                }
+            }
+
+            _actualQualityTier = song.Quality.Contains("Hi-Res", StringComparison.OrdinalIgnoreCase) ? AudioQualityTier.HiRes
+                               : song.Quality.Contains("SQ", StringComparison.OrdinalIgnoreCase) ? AudioQualityTier.SQ
+                               : song.Quality.Contains("HQ", StringComparison.OrdinalIgnoreCase) ? AudioQualityTier.HQ
+                               : AudioQualityTier.Standard;
+
+            // 1. 优先读取落盘音频文件的内嵌歌词（零额外网络往返）
+            lyrics = !string.IsNullOrEmpty(playUrl) ? await LocalMusicService.GetLyricsAsync(song, playUrl) : [];
+
+            // 2. 仅当文件内没有内嵌歌词时，才发起网络请求尝试探测下载远端同名 .lrc
+            if (lyrics.Count == 0 && server != null && !string.IsNullOrEmpty(song.WebDavHref) && !string.IsNullOrEmpty(playUrl))
+            {
+                await WebDavService.TryDownloadRemoteLrcAsync(server, song.WebDavHref, playUrl);
+                lyrics = await LocalMusicService.GetLyricsAsync(song, playUrl);
+            }
+
+            // 同步更新全局激活歌曲与控制栏/MPRIS/AOD 状态
+            _activeSong = song;
+            Application.Invoke(() =>
+            {
+                _controlBar.SetCurrentSong(song);
+                _controlBar.UpdateStatus($"正在播放: {song.Title} - {song.Artist}");
+                _aodView.UpdateSong(song);
+            });
+            _player.UpdateCurrentSong(song);
+            _mprisService.UpdateSong(song);
+        }
+        else if (song.IsLocal)
         {
             playUrl = song.LocalFilePath;
             _actualQualityTier = song.Quality.Contains("Hi-Res", StringComparison.OrdinalIgnoreCase) ? AudioQualityTier.HiRes
@@ -228,11 +283,22 @@ public sealed partial class MainWindow
                 });
             }
 
+            // 若为本地歌曲或 WebDAV 歌曲，且无歌词或缺少翻译歌词（仅在外文歌曲确实需要翻译时），后台自动尝试匹配在线歌词与双语翻译
+            bool isLocalOrWebDav = song.IsLocal || song.IsWebDav;
+            bool isNoLyrics = _currentLyrics.Count == 0 || (_currentLyrics.Count == 1 && _currentLyrics[0].Text == "暂无歌词");
+            bool isMissingTrans = !hasTrans && LyricParser.NeedsTranslation(_currentLyrics);
+            if (isLocalOrWebDav && !IsCurrentSongLyricMatched(song) && (isNoLyrics || isMissingTrans))
+            {
+                _ = Task.Run(async () => await AutoMatchLyricAsync(song, playUrl, isNoLyrics));
+            }
+
             Application.Invoke(() =>
             {
                 UpdatePlayerStatus();
                 _nowPlayingView.SetSong(song, AudioQualityHelper.GetBadge(_actualQualityTier));
                 _nowPlayingView.SetLyrics(_currentLyrics, _showTranslation);
+                _nowPlayingView.SetLyricMatchedState(IsCurrentSongLyricMatched(song));
+                UpdateLyricMatchButtonHighlight();
             });
         }
         else
@@ -288,25 +354,17 @@ public sealed partial class MainWindow
     private void UpdateTranslationButtonHighlight()
     {
         if (_lyricTransBtn == null) return;
-        // 只显示一个译字，通过是否高亮判断是否开启
-        if (_showTranslation && _hasTranslation)
+        var color = (_showTranslation && _hasTranslation) ? MikuTheme.QqGreenLight : MikuTheme.MikuTextMuted;
+        var attr = new Terminal.Gui.Drawing.Attribute(color, Color.None);
+        _lyricTransBtn.SetScheme(new Scheme
         {
-            _lyricTransBtn.SetScheme(new Scheme
-            {
-                Normal = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenLight, Color.None),
-                Focus = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenLight, Color.None),
-                HotNormal = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenLight, Color.None)
-            });
-        }
-        else
-        {
-            _lyricTransBtn.SetScheme(new Scheme
-            {
-                Normal = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Color.None),
-                Focus = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Color.None),
-                HotNormal = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Color.None)
-            });
-        }
+            Normal = attr,
+            Focus = attr,
+            HotNormal = attr,
+            HotFocus = attr,
+            Highlight = attr,
+            Disabled = attr
+        });
         _lyricTransBtn.SetNeedsDraw();
     }
 
@@ -802,6 +860,351 @@ public sealed partial class MainWindow
         catch (Exception ex)
         {
             AppLogger.Debug("MainWindow", $"PrefetchNextSongAsync exception: {ex.Message}");
+        }
+    }
+
+    private static readonly HashSet<string> s_matchedOnlineSongKeys = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, List<LyricLine>> s_originalLyricsBackup = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string GetSongIdentityKey(Song song)
+    {
+        if (!string.IsNullOrEmpty(song.LocalFilePath)) return "LOCAL:" + song.LocalFilePath;
+        if (!string.IsNullOrEmpty(song.WebDavHref)) return "WEBDAV:" + song.WebDavHref;
+        return "MID:" + song.Mid;
+    }
+
+    private static bool IsCurrentSongLyricMatched(Song? song)
+    {
+        if (song == null) return false;
+        return s_matchedOnlineSongKeys.Contains(GetSongIdentityKey(song));
+    }
+
+    /// <summary>
+    /// 统一的高精度在线歌词候选检索与匹配引擎（包含版本过滤与严格时长误差防误伤）
+    /// </summary>
+    private static async Task<(Song BestMatch, List<LyricLine> Lyrics)?> QueryOnlineLyricsMatchAsync(Song song)
+    {
+        var cleanTitle = WebDavService.CleanTrackNumberPrefix(song.Title);
+        var artist = (string.IsNullOrWhiteSpace(song.Artist) || song.Artist == "未知歌手") ? "" : song.Artist.Trim();
+        var searchKw = string.IsNullOrWhiteSpace(artist) ? cleanTitle : $"{cleanTitle} {artist}";
+
+        var candidates = await QqMusicApi.SearchAsync(searchKw, 1, 10);
+        if (candidates == null || candidates.Count == 0) return null;
+
+        double localDuration = song.Duration;
+        bool isLocalLive = song.Title.Contains("Live", StringComparison.OrdinalIgnoreCase) ||
+                           song.Title.Contains("现场") ||
+                           song.Title.Contains("演唱会");
+
+        // 核心防误匹配机制 1：版本过滤（非 Live 歌曲排除现场/演唱会候选）
+        var versionFiltered = candidates.Where(c =>
+        {
+            if (isLocalLive) return true;
+            bool cIsLive = c.Title.Contains("Live", StringComparison.OrdinalIgnoreCase) ||
+                           c.Title.Contains("现场") ||
+                           c.Title.Contains("演唱会");
+            return !cIsLive;
+        }).ToList();
+
+        var candidatePool = versionFiltered.Count > 0 ? versionFiltered : candidates;
+
+        // 核心防误匹配机制 2：时长误差过滤（<= 3s 严格优先，次选 <= 5s，防串烧/加长版误伤）
+        Song? bestMatch = null;
+        if (localDuration > 10)
+        {
+            var tightCandidates = candidatePool
+                .Where(c => Math.Abs(c.Duration - localDuration) <= 3.0)
+                .OrderBy(c => Math.Abs(c.Duration - localDuration))
+                .ToList();
+
+            if (tightCandidates.Count > 0)
+            {
+                bestMatch = tightCandidates[0];
+            }
+            else
+            {
+                var relaxedCandidates = candidatePool
+                    .Where(c => Math.Abs(c.Duration - localDuration) <= 5.0)
+                    .OrderBy(c => Math.Abs(c.Duration - localDuration))
+                    .ToList();
+
+                if (relaxedCandidates.Count > 0)
+                {
+                    bestMatch = relaxedCandidates[0];
+                }
+            }
+        }
+        else
+        {
+            bestMatch = candidatePool[0];
+        }
+
+        if (bestMatch == null) return null;
+
+        var onlineLyrics = await QqMusicApi.GetLyricsAsync(bestMatch.Mid);
+        if (onlineLyrics == null || onlineLyrics.Count == 0 || (onlineLyrics.Count == 1 && onlineLyrics[0].Text == "暂无歌词"))
+        {
+            return null;
+        }
+
+        return (bestMatch, onlineLyrics);
+    }
+
+    /// <summary>
+    /// 将匹配得到的歌词文本持久化写回本地或落盘缓存的 .lrc 文件（包含双语翻译）
+    /// </summary>
+    private static void SaveMatchedLrcToDisk(Song song, string? playUrl, List<LyricLine> lyrics)
+    {
+        string? lrcSavePath = null;
+        if (song.IsLocal && !string.IsNullOrEmpty(song.LocalFilePath))
+        {
+            lrcSavePath = Path.ChangeExtension(song.LocalFilePath, ".lrc");
+        }
+        else if (song.IsWebDav)
+        {
+            if (!string.IsNullOrEmpty(playUrl) && File.Exists(playUrl))
+            {
+                lrcSavePath = Path.ChangeExtension(playUrl, ".lrc");
+            }
+            else if (!string.IsNullOrEmpty(song.LocalFilePath))
+            {
+                lrcSavePath = Path.ChangeExtension(song.LocalFilePath, ".lrc");
+            }
+        }
+
+        if (!string.IsNullOrEmpty(lrcSavePath))
+        {
+            try
+            {
+                var sb = new StringBuilder();
+                foreach (var line in lyrics)
+                {
+                    var ts = line.Timestamp;
+                    var timeStr = $"[{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds / 10:D2}]";
+                    sb.AppendLine($"{timeStr}{line.Text}");
+                    if (!string.IsNullOrWhiteSpace(line.Trans))
+                    {
+                        sb.AppendLine($"{timeStr}{line.Trans}");
+                    }
+                }
+                File.WriteAllText(lrcSavePath, sb.ToString(), Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("MainWindow.Playback", $"Failed to write matched .lrc to disk: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 后台自动尝试对本地或 WebDAV 歌曲进行在线歌词/翻译匹配
+    /// </summary>
+    private async Task AutoMatchLyricAsync(Song song, string? playUrl, bool needLyrics)
+    {
+        var songKey = GetSongIdentityKey(song);
+        try
+        {
+            var matchResult = await QueryOnlineLyricsMatchAsync(song);
+            if (!matchResult.HasValue) return;
+
+            var (bestMatch, onlineLyrics) = matchResult.Value;
+            if (onlineLyrics == null || onlineLyrics.Count == 0 || (onlineLyrics.Count == 1 && onlineLyrics[0].Text == "暂无歌词"))
+            {
+                return;
+            }
+
+            // 若原先已有歌词（只是缺少翻译），则必须要求在线歌词包含有效翻译才进行升级替换
+            if (!needLyrics && !LyricParser.HasTranslation(onlineLyrics))
+            {
+                return;
+            }
+
+            // 备份原歌词支持按 Y 撤销
+            lock (s_originalLyricsBackup)
+            {
+                s_originalLyricsBackup[songKey] = _currentLyrics.ToList();
+            }
+            s_matchedOnlineSongKeys.Add(songKey);
+
+            // 持久化到磁盘同名 .lrc（含双语翻译）
+            SaveMatchedLrcToDisk(song, playUrl, onlineLyrics);
+
+            // 若在匹配期间用户已经切换了歌曲，则不修改当前界面的展示
+            if (_activeSong == null || GetSongIdentityKey(_activeSong) != songKey)
+            {
+                return;
+            }
+
+            _currentLyrics.Clear();
+            _currentLyrics.AddRange(onlineLyrics);
+            _player.UpdateCurrentLyrics(onlineLyrics);
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+            {
+                _standaloneWebServer.CurrentLyrics = onlineLyrics;
+                _standaloneWebServer.BroadcastState("lyrics_change");
+            }
+
+            var hasTrans = LyricParser.HasTranslation(onlineLyrics);
+            Application.Invoke(() =>
+            {
+                _hasTranslation = hasTrans;
+                _nowPlayingView.SetLyrics(onlineLyrics, _showTranslation);
+                _nowPlayingView.SetTranslationState(_showTranslation);
+                _nowPlayingView.SetLyricMatchedState(true);
+                UpdateTranslationButtonHighlight();
+                UpdateLyricMatchButtonHighlight();
+                RefreshLyricListView();
+                _controlBar?.UpdateTranslationAvailability(hasTrans);
+                string reason = needLyrics ? "歌词" : "双语翻译";
+                _controlBar?.UpdateStatus($"[歌词] 已自动匹配在线{reason}: {bestMatch.Title} - {bestMatch.Artist}");
+            });
+
+            // 若 WebDAV 歌曲当前歌手未知，同步补全歌手信息
+            if (song.IsWebDav && (string.IsNullOrWhiteSpace(song.Artist) || song.Artist == "未知歌手") && !string.IsNullOrWhiteSpace(bestMatch.Artist))
+            {
+                var server = WebDavService.GetActiveServer();
+                if (server != null && !string.IsNullOrEmpty(song.WebDavHref) && !string.IsNullOrEmpty(playUrl))
+                {
+                    WebDavService.TryUpdateCacheMetadata(server, song.WebDavHref, playUrl, song.Title, bestMatch.Artist, bestMatch.Album);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn("MainWindow.Playback", $"AutoMatchLyricAsync error for {song.Title}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// [Feat-03] 本地与 WebDAV 在线歌词智能匹配与升级（Y 键/大界面按钮触发，支持可逆撤销恢复）
+    /// </summary>
+    private async Task MatchOrRestoreLyricAsync()
+    {
+        var song = _activeSong;
+        if (song == null || (!song.IsLocal && !song.IsWebDav))
+        {
+            _controlBar?.UpdateStatus("[歌词] 仅支持对本地音乐或 WebDAV 私有云歌曲匹配在线歌词");
+            return;
+        }
+
+        var songKey = GetSongIdentityKey(song);
+
+        // 1. 若当前已处于在线匹配状态，则执行撤销操作：恢复内嵌原始歌词并删除本地生成的 .lrc
+        if (s_matchedOnlineSongKeys.Contains(songKey))
+        {
+            s_matchedOnlineSongKeys.Remove(songKey);
+
+            // 删除本次在线匹配生成的 .lrc 覆盖文件
+            string? lrcPath = null;
+            if (song.IsLocal && !string.IsNullOrEmpty(song.LocalFilePath))
+            {
+                lrcPath = Path.ChangeExtension(song.LocalFilePath, ".lrc");
+            }
+            else if (song.IsWebDav)
+            {
+                if (!string.IsNullOrEmpty(_currentPlayUrl) && File.Exists(_currentPlayUrl))
+                {
+                    lrcPath = Path.ChangeExtension(_currentPlayUrl, ".lrc");
+                }
+                else if (!string.IsNullOrEmpty(song.LocalFilePath))
+                {
+                    lrcPath = Path.ChangeExtension(song.LocalFilePath, ".lrc");
+                }
+            }
+
+            if (!string.IsNullOrEmpty(lrcPath) && File.Exists(lrcPath))
+            {
+                try
+                {
+                    File.Delete(lrcPath);
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("MainWindow.Playback", $"Failed to delete lrc file on rollback: {ex.Message}");
+                }
+            }
+
+            // 恢复歌词：优先从内存备份恢复，其次尝试提取原始音频内嵌歌词
+            List<LyricLine> restoredLyrics = [];
+            lock (s_originalLyricsBackup)
+            {
+                if (s_originalLyricsBackup.TryGetValue(songKey, out var backup) && backup.Count > 0)
+                {
+                    restoredLyrics = backup;
+                }
+            }
+
+            if (restoredLyrics.Count == 0)
+            {
+                restoredLyrics = await LocalMusicService.GetEmbeddedLyricsAsync(song, _currentPlayUrl);
+            }
+
+            _currentLyrics.Clear();
+            _currentLyrics.AddRange(restoredLyrics);
+            _player.UpdateCurrentLyrics(restoredLyrics);
+            var hasTrans = LyricParser.HasTranslation(restoredLyrics);
+
+            Application.Invoke(() =>
+            {
+                _hasTranslation = hasTrans;
+                _nowPlayingView.SetLyrics(restoredLyrics, _showTranslation);
+                _nowPlayingView.SetTranslationState(_showTranslation);
+                _nowPlayingView.SetLyricMatchedState(false);
+                UpdateTranslationButtonHighlight();
+                UpdateLyricMatchButtonHighlight();
+                RefreshLyricListView();
+                _controlBar?.UpdateTranslationAvailability(hasTrans);
+                _controlBar?.UpdateStatus($"[歌词] 已撤销在线匹配，恢复内嵌原始歌词 ({restoredLyrics.Count} 行)");
+            });
+            return;
+        }
+
+        // 2. 首次按 Y 发起在线检索匹配
+        lock (s_originalLyricsBackup)
+        {
+            s_originalLyricsBackup[songKey] = _currentLyrics.ToList();
+        }
+
+        _controlBar?.UpdateStatus($"[歌词] 正在检索匹配在线歌词...");
+
+        try
+        {
+            var matchResult = await QueryOnlineLyricsMatchAsync(song);
+            if (!matchResult.HasValue)
+            {
+                _controlBar?.UpdateStatus($"[歌词] 匹配失败: 未检索到时长与版本相匹配的在线曲目 (防误匹配拦截)");
+                return;
+            }
+
+            var (bestMatch, onlineLyrics) = matchResult.Value;
+
+            SaveMatchedLrcToDisk(song, _currentPlayUrl, onlineLyrics);
+
+            s_matchedOnlineSongKeys.Add(songKey);
+            _currentLyrics.Clear();
+            _currentLyrics.AddRange(onlineLyrics);
+            _player.UpdateCurrentLyrics(onlineLyrics);
+
+            var hasTrans = LyricParser.HasTranslation(onlineLyrics);
+            Application.Invoke(() =>
+            {
+                _hasTranslation = hasTrans;
+                _nowPlayingView.SetLyrics(onlineLyrics, _showTranslation);
+                _nowPlayingView.SetTranslationState(_showTranslation);
+                _nowPlayingView.SetLyricMatchedState(true);
+                UpdateTranslationButtonHighlight();
+                UpdateLyricMatchButtonHighlight();
+                RefreshLyricListView();
+                _controlBar?.UpdateTranslationAvailability(hasTrans);
+
+                string diffMsg = song.Duration > 0 ? $" (时长误差 {Math.Abs(bestMatch.Duration - song.Duration):F1}s)" : "";
+                _controlBar?.UpdateStatus($"[歌词] 匹配成功: {bestMatch.Title} - {bestMatch.Artist}{diffMsg}，再次按 Y 可撤销");
+            });
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn("MainWindow.Playback", $"Match lyric failed: {ex.Message}");
+            _controlBar?.UpdateStatus($"[歌词] 在线检索匹配异常: {ex.Message}");
         }
     }
 }

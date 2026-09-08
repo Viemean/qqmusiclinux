@@ -390,9 +390,23 @@ public static class TerminalImageHelper
     {
         if (song == null) return null;
 
-        if (song.IsLocal)
+        if (song.IsLocal || song.IsWebDav)
         {
-            return await QQMusic.Tui.Services.LocalMusicService.EnsureCoverAsync(song);
+            var filePath = song.LocalFilePath;
+            if (string.IsNullOrEmpty(filePath) && song.IsWebDav && !string.IsNullOrEmpty(song.WebDavHref))
+            {
+                var server = QQMusic.Tui.Services.WebDavService.GetActiveServer();
+                if (server != null)
+                {
+                    filePath = QQMusic.Tui.Services.WebDavService.GetLocalCachePath(server, song.WebDavHref);
+                }
+            }
+
+            if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+            {
+                return await QQMusic.Tui.Services.LocalMusicService.EnsureCoverAsync(song with { LocalFilePath = filePath });
+            }
+            return null;
         }
 
         // 1. 若拥有 AlbumMid，优先获取专辑 1200 超高清封面

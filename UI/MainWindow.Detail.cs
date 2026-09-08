@@ -48,9 +48,9 @@ public sealed partial class MainWindow
 
     private void OnArtistClicked(Song song)
     {
-        if (song.IsLocal)
+        if (song.IsLocal || song.IsWebDav)
         {
-            _controlBar.UpdateStatus("[本地音乐] 本地曲目暂不支持查看在线歌手主页");
+            _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目暂不支持查看在线歌手主页");
             return;
         }
 
@@ -81,9 +81,9 @@ public sealed partial class MainWindow
 
     private void HandleNowPlayingArtistClicked(Song song)
     {
-        if (song.IsLocal)
+        if (song.IsLocal || song.IsWebDav)
         {
-            _controlBar.UpdateStatus("[本地音乐] 本地曲目暂不支持查看在线歌手主页");
+            _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目暂不支持查看在线歌手主页");
             return;
         }
 
@@ -126,9 +126,9 @@ public sealed partial class MainWindow
 
     private void OnAlbumClicked(Song song)
     {
-        if (song.IsLocal)
+        if (song.IsLocal || song.IsWebDav)
         {
-            _controlBar.UpdateStatus("[本地音乐] 本地曲目暂不支持查看在线专辑主页");
+            _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目暂不支持查看在线专辑主页");
             return;
         }
 
@@ -160,6 +160,8 @@ public sealed partial class MainWindow
             TerminalImageHelper.ClearImages();
             _lyricListView.Visible = false;
             _lyricTransBtn.Visible = false;
+            _lyricImmersiveBtn.Visible = false;
+            _lyricMatchBtn.Visible = false;
             _artistAlbumDetailView.Visible = true;
             UpdateLyricTitle($"歌手 - {artist.Name}");
 
@@ -465,6 +467,8 @@ public sealed partial class MainWindow
 
         _lyricListView.Visible = false;
         _lyricTransBtn.Visible = false;
+        _lyricImmersiveBtn.Visible = false;
+        _lyricMatchBtn.Visible = false;
         _artistAlbumDetailView.Visible = true;
         UpdateLyricTitle($"专辑 - {albumName}");
 
@@ -587,6 +591,8 @@ public sealed partial class MainWindow
         TerminalImageHelper.ClearImages();
         _lyricListView.Visible = false;
         _lyricTransBtn.Visible = false;
+        _lyricImmersiveBtn.Visible = false;
+        _lyricMatchBtn.Visible = false;
         _artistAlbumDetailView.Visible = true;
         UpdateLyricTitle($"专辑 - {albumName}");
 
@@ -664,6 +670,8 @@ public sealed partial class MainWindow
 
             _lyricListView.Visible = false;
             _lyricTransBtn.Visible = false;
+            _lyricImmersiveBtn.Visible = false;
+            _lyricMatchBtn.Visible = false;
             _artistAlbumDetailView.Visible = true;
             UpdateLyricTitle($"歌手 - {_currentSingerName}");
 
@@ -710,6 +718,8 @@ public sealed partial class MainWindow
         _artistAlbumDetailView.Visible = false;
         _lyricListView.Visible = true;
         _lyricTransBtn.Visible = true;
+        _lyricImmersiveBtn.Visible = true;
+        UpdateLyricMatchButtonHighlight();
         UpdateLyricTitle("歌词");
         TerminalImageHelper.ClearImages();
         RefreshLyricListView();
@@ -734,16 +744,14 @@ public sealed partial class MainWindow
             return;
         }
 
-        string text;
-        if (song.IsLocal)
+        if (song.IsLocal || song.IsWebDav)
         {
-            text = $"{song.Artist} - {song.Title}\n[本地音乐] {song.LocalFilePath}";
+            _controlBar.UpdateStatus("[私有音乐] 本地/WebDAV 曲目不支持分享");
+            return;
         }
-        else
-        {
-            var webUrl = $"https://y.qq.com/n/ryqq/songDetail/{song.Mid}";
-            text = $"{song.Artist} - {song.Title}\n{webUrl}";
-        }
+
+        var webUrl = $"https://y.qq.com/n/ryqq/songDetail/{song.Mid}";
+        string text = $"{song.Artist} - {song.Title}\n{webUrl}";
 
         bool ok = ClipboardService.SetText(text);
         if (ok)

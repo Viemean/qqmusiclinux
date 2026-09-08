@@ -408,7 +408,10 @@ public sealed class PlayerControlBar : FrameView
         {
             _focusedControlIndex = 2;
             UpdateControlHighlight();
-            ShareClicked?.Invoke();
+            if (!_isLocalMode)
+            {
+                ShareClicked?.Invoke();
+            }
         };
         Add(_shareBtn);
 
@@ -549,7 +552,7 @@ public sealed class PlayerControlBar : FrameView
 
     private bool IsControlSkipped(int index)
     {
-        if (_isLocalMode && (index == 1 || index == 8)) // 收藏 或 下载
+        if (_isLocalMode && (index == 1 || index == 2 || index == 8)) // 收藏、分享 或 下载
         {
             return true;
         }
@@ -568,7 +571,7 @@ public sealed class PlayerControlBar : FrameView
                 if (!_isLocalMode) FavoriteClicked?.Invoke();
                 break;
             case 2: // 分享
-                ShareClicked?.Invoke();
+                if (!_isLocalMode) ShareClicked?.Invoke();
                 break;
             case 3: // 循环模式
                 ModeClicked?.Invoke();
@@ -684,10 +687,12 @@ public sealed class PlayerControlBar : FrameView
         {
             var albumText = string.IsNullOrWhiteSpace(song.Album) ? "单曲" : song.Album;
             _persistentPlaybackStatus = $"{song.Artist} - {song.Title} - {albumText}";
+            SetLocalMode(song.IsLocal || song.IsWebDav);
         }
         else
         {
             _persistentPlaybackStatus = "暂无播放曲目";
+            SetLocalMode(false);
         }
 
         if (_temporaryStatusTimeout == null)
@@ -753,6 +758,7 @@ public sealed class PlayerControlBar : FrameView
         _isLocalMode = isLocal;
         _downloadBtn.Visible = !isLocal;
         _favBtn.Visible = !isLocal;
+        _shareBtn.Visible = !isLocal;
         UpdateQualityPosition();
         SetNeedsLayout();
     }

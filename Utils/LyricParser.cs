@@ -263,6 +263,49 @@ public static partial class LyricParser
         return false;
     }
 
+    /// <summary>
+    /// 判断歌词是否主要为外文（日韩文或英文等），确实需要中文辅助翻译
+    /// </summary>
+    public static bool NeedsTranslation(IEnumerable<LyricLine>? lyrics)
+    {
+        if (lyrics == null) return false;
+        int hanziCount = 0;
+        int foreignCharCount = 0;
+
+        foreach (var line in lyrics)
+        {
+            if (string.IsNullOrWhiteSpace(line.Text)) continue;
+            if (IsMetaInfoLine(line.Timestamp, line.Text)) continue;
+
+            foreach (var ch in line.Text)
+            {
+                // 日文假名 (平假名 \u3040-\u309F, 片假名 \u30A0-\u30FF)
+                if (ch >= 0x3040 && ch <= 0x30FF)
+                {
+                    return true;
+                }
+                // 韩文音节 (\uAC00-\uD7AF)
+                if (ch >= 0xAC00 && ch <= 0xD7AF)
+                {
+                    return true;
+                }
+                // 汉字
+                if (ch >= 0x4E00 && ch <= 0x9FA5)
+                {
+                    hanziCount++;
+                }
+                // 拉丁字母
+                else if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z'))
+                {
+                    foreignCharCount++;
+                }
+            }
+        }
+
+        // 若通篇拉丁字母数量远超汉字（如英文歌曲），判定为外文歌需要翻译
+        return foreignCharCount > 20 && foreignCharCount > hanziCount * 2;
+    }
+
     [GeneratedRegex(@"\[(\d{1,2}):(\d{1,2})(?:[\.:](\d{1,3}))?\]")]
     private static partial Regex TimestampRegex();
 }
