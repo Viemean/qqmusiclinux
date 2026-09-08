@@ -375,14 +375,14 @@ public static partial class WebDavService
     }
 
     /// <summary>
-    /// 获取 WebDAV 曲目的封面（支持本地封面缓存直读、已缓存音频直读、轻量 Range 提取内嵌封面、同目录 cover.jpg 及在线匹配）
+    /// 获取 WebDAV 曲目的封面（支持本地封面缓存直读、已缓存音频直读、自适应 Range 完整拉取内嵌封面、同目录 cover.jpg 及在线匹配）
     /// </summary>
     public static async Task<string?> EnsureCoverAsync(WebDavServer server, Song song, CancellationToken ct = default)
     {
         if (server == null || string.IsNullOrEmpty(song.WebDavHref)) return null;
 
         var md5 = ComputeMd5(song.WebDavHref);
-        var cacheKey = $"webdav_{md5}";
+        var cacheKey = $"webdav_v2_{md5}";
         var targetPng = Path.Combine(CacheManager.CoversDir, $"local_{cacheKey}.png");
         if (File.Exists(targetPng))
         {
@@ -401,7 +401,7 @@ public static partial class WebDavService
             return await LocalMusicService.EnsureCoverAsync(song with { LocalFilePath = localAudio });
         }
 
-        // B. 流式未缓存模式：通过 HTTP Range 请求拉取文件头部前 1MB 提取内嵌封面
+        // B. 流式未缓存模式：通过自适应 HTTP Range 请求拉取足够涵盖封面元数据区的头部（初始 4MB，不足自动按真实块大小补齐）
         var ext = Path.GetExtension(song.WebDavHref);
         var tmpHeaderFile = Path.Combine(Path.GetTempPath(), $"webdav_cov_hdr_{Guid.NewGuid():N}{ext}");
         var tempExtractImg = Path.Combine(CacheManager.CoversDir, $"raw_wd_{md5}.tmp");
@@ -409,15 +409,35 @@ public static partial class WebDavService
         {
             var client = GetHttpClient(server);
             var uri = BuildFullUri(server, song.WebDavHref);
-            using var req = new HttpRequestMessage(HttpMethod.Get, uri);
-            req.Headers.Range = new RangeHeaderValue(0, 1048575); // 1MB 足够覆盖 ID3v2 APIC 与 FLAC PICTURE 块
-            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            if (resp.IsSuccessStatusCode || resp.StatusCode == HttpStatusCode.PartialContent)
+
+            // 1. 初始拉取前 4MB 头部（足够覆盖绝大多数高清大图）
+            long rangeEnd = 4 * 1024 * 1024 - 1;
+            byte[]? headerData = await FetchRangeBytesAsync(client, uri, 0, rangeEnd, ct).ConfigureAwait(false);
+            if (headerData != null && headerData.Length > 0)
             {
-                using (var fs = new FileStream(tmpHeaderFile, FileMode.Create, FileAccess.Write, FileShare.None))
+                // 探测 FLAC 或 ID3v2 元数据块真实需求长度
+                long requiredHeaderLen = -1;
+                if (headerData.Length >= 4 && headerData[0] == 0x66 && headerData[1] == 0x4C && headerData[2] == 0x61 && headerData[3] == 0x43) // "fLaC"
                 {
-                    await resp.Content.CopyToAsync(fs, ct).ConfigureAwait(false);
+                    requiredHeaderLen = GetFlacRequiredHeaderLength(headerData);
                 }
+                else if (headerData.Length >= 10 && headerData[0] == 0x49 && headerData[1] == 0x44 && headerData[2] == 0x33) // "ID3"
+                {
+                    requiredHeaderLen = GetId3v2RequiredHeaderLength(headerData);
+                }
+
+                // 若真实所需元数据长度超出 4MB 且在合理上限内（<= 20MB），再次精确拉取完整元数据区
+                if (requiredHeaderLen > headerData.Length && requiredHeaderLen <= 20 * 1024 * 1024)
+                {
+                    AppLogger.Info("WebDavService", $"Header length {headerData.Length} insufficient for required {requiredHeaderLen} bytes, refetching exact range...");
+                    var fullHeaderData = await FetchRangeBytesAsync(client, uri, 0, requiredHeaderLen - 1, ct).ConfigureAwait(false);
+                    if (fullHeaderData != null && fullHeaderData.Length >= requiredHeaderLen)
+                    {
+                        headerData = fullHeaderData;
+                    }
+                }
+
+                await File.WriteAllBytesAsync(tmpHeaderFile, headerData, ct).ConfigureAwait(false);
 
                 if (File.Exists(tmpHeaderFile) && new FileInfo(tmpHeaderFile).Length > 0)
                 {
@@ -425,7 +445,7 @@ public static partial class WebDavService
                     if (track.EmbeddedPictures != null && track.EmbeddedPictures.Count > 0)
                     {
                         var pic = track.EmbeddedPictures[0];
-                        if (pic.PictureData != null && pic.PictureData.Length > 0)
+                        if (pic.PictureData != null && pic.PictureData.Length > 0 && IsValidPictureData(pic.PictureData))
                         {
                             await File.WriteAllBytesAsync(tempExtractImg, pic.PictureData, ct).ConfigureAwait(false);
                             var result = await TerminalImageHelper.EnsureLocalImageProcessedAsync(tempExtractImg, cacheKey).ConfigureAwait(false);
@@ -472,7 +492,7 @@ public static partial class WebDavService
                         if (getResp.IsSuccessStatusCode)
                         {
                             var bytes = await getResp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-                            if (bytes.Length > 1024)
+                            if (bytes.Length > 1024 && IsValidPictureData(bytes))
                             {
                                 await File.WriteAllBytesAsync(tempExtractImg, bytes, ct).ConfigureAwait(false);
                                 var result = await TerminalImageHelper.EnsureLocalImageProcessedAsync(tempExtractImg, cacheKey).ConfigureAwait(false);
@@ -510,5 +530,91 @@ public static partial class WebDavService
         catch {}
 
         return null;
+    }
+
+    private static async Task<byte[]?> FetchRangeBytesAsync(HttpClient client, Uri uri, long start, long end, CancellationToken ct)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, uri);
+            req.Headers.Range = new RangeHeaderValue(start, end);
+            using var resp = await client.SendAsync(req, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
+            if (resp.IsSuccessStatusCode || resp.StatusCode == HttpStatusCode.PartialContent)
+            {
+                return await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+            }
+        }
+        catch {}
+        return null;
+    }
+
+    private static long GetFlacRequiredHeaderLength(byte[] buffer)
+    {
+        if (buffer.Length < 4 || buffer[0] != 0x66 || buffer[1] != 0x4C || buffer[2] != 0x61 || buffer[3] != 0x43)
+        {
+            return -1;
+        }
+
+        int offset = 4;
+        long needed = 4;
+        while (offset + 4 <= buffer.Length)
+        {
+            byte header0 = buffer[offset];
+            bool isLast = (header0 & 0x80) != 0;
+            int blockLength = (buffer[offset + 1] << 16) | (buffer[offset + 2] << 8) | buffer[offset + 3];
+
+            needed = offset + 4 + (long)blockLength;
+            offset += 4 + blockLength;
+
+            if (isLast) break;
+        }
+        return needed;
+    }
+
+    private static long GetId3v2RequiredHeaderLength(byte[] buffer)
+    {
+        if (buffer.Length < 10 || buffer[0] != 0x49 || buffer[1] != 0x44 || buffer[2] != 0x33)
+        {
+            return -1;
+        }
+
+        int tagSize = ((buffer[6] & 0x7F) << 21) |
+                      ((buffer[7] & 0x7F) << 14) |
+                      ((buffer[8] & 0x7F) << 7) |
+                      (buffer[9] & 0x7F);
+        return 10 + (long)tagSize;
+    }
+
+    private static bool IsValidPictureData(byte[] data)
+    {
+        if (data == null || data.Length < 16) return false;
+
+        // JPEG: 必须以 FF D8 开头，且以 FF D9 结尾（允许末尾少量 padding）
+        if (data[0] == 0xFF && data[1] == 0xD8)
+        {
+            for (int i = data.Length - 1; i >= Math.Max(0, data.Length - 64); i--)
+            {
+                if (data[i] == 0xD9 && i > 0 && data[i - 1] == 0xFF)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // PNG: 必须以 89 50 4E 47 开头，且包含 IEND 块
+        if (data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47)
+        {
+            for (int i = data.Length - 4; i >= Math.Max(0, data.Length - 64); i--)
+            {
+                if (data[i] == 0x49 && data[i + 1] == 0x45 && data[i + 2] == 0x4E && data[i + 3] == 0x44)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        return true;
     }
 }
