@@ -13,7 +13,7 @@ public static partial class Program
     {
         if (args.Contains("--version") || args.Contains("-v"))
         {
-            Console.WriteLine("qqmusic-tui 0.1.7");
+            Console.WriteLine("qqmusic-tui 0.1.8");
             return;
         }
 
