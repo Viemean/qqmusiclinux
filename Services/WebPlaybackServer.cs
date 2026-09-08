@@ -252,7 +252,7 @@ public sealed class WebPlaybackServer : IDisposable
                 }
                 else if (path == "/cover")
                 {
-                    await HandleCoverRequestAsync(stream, ct).ConfigureAwait(false);
+                    await HandleCoverRequestAsync(stream, rawPath, ct).ConfigureAwait(false);
                 }
                 else if (path == "/stream/audio")
                 {
@@ -360,19 +360,46 @@ public sealed class WebPlaybackServer : IDisposable
             }
         }
 
-    private async Task HandleCoverRequestAsync(NetworkStream stream, CancellationToken ct)
+    private async Task HandleCoverRequestAsync(NetworkStream stream, string rawPath, CancellationToken ct)
     {
-        var song = CurrentSong;
-        if (song == null)
+        string? mid = null;
+        string? albumMid = null;
+
+        var qIdx = rawPath.IndexOf('?');
+        if (qIdx >= 0 && qIdx + 1 < rawPath.Length)
         {
-            await SendResponseAsync(stream, 404, "Not Found", "text/plain", "No song playing", ct).ConfigureAwait(false);
-            return;
+            var qs = rawPath[(qIdx + 1)..].Split('&');
+            foreach (var param in qs)
+            {
+                var kv = param.Split('=');
+                if (kv.Length == 2)
+                {
+                    var k = kv[0];
+                    var v = Uri.UnescapeDataString(kv[1]);
+                    if (k.Equals("mid", StringComparison.OrdinalIgnoreCase)) mid = v;
+                    else if (k.Equals("albumMid", StringComparison.OrdinalIgnoreCase)) albumMid = v;
+                }
+            }
         }
 
         string? coverFile = null;
         try
         {
-            coverFile = await TerminalImageHelper.EnsureSongCoverAsync(song).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(albumMid))
+            {
+                coverFile = await TerminalImageHelper.EnsureAlbumCoverAsync(albumMid).ConfigureAwait(false);
+            }
+
+            if (string.IsNullOrEmpty(coverFile) && CurrentSong != null)
+            {
+                coverFile = await TerminalImageHelper.EnsureSongCoverAsync(CurrentSong).ConfigureAwait(false);
+            }
+
+            if (string.IsNullOrEmpty(coverFile) && !string.IsNullOrWhiteSpace(mid))
+            {
+                var tempSong = new Song(mid, "", "", "", 0, AlbumMid: albumMid ?? "");
+                coverFile = await TerminalImageHelper.EnsureSongCoverAsync(tempSong).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {
@@ -389,6 +416,7 @@ public sealed class WebPlaybackServer : IDisposable
                 string headers = $"HTTP/1.1 200 OK\r\n" +
                                  $"Content-Type: {contentType}\r\n" +
                                  $"Content-Length: {bytes.Length}\r\n" +
+                                 $"Cache-Control: public, max-age=86400\r\n" +
                                  $"Access-Control-Allow-Origin: *\r\n" +
                                  $"Connection: close\r\n\r\n";
                 byte[] headerBytes = Encoding.ASCII.GetBytes(headers);

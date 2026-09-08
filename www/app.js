@@ -8,6 +8,9 @@ class ElectronMusicPlayer {
     this.stageView = document.getElementById('stageView');
     this.coverContainer = document.getElementById('coverContainer');
     this.albumCover = document.getElementById('albumCover');
+    if (this.albumCover) {
+      this.albumCover.crossOrigin = 'anonymous';
+    }
     this.mobileLyricsContainer = document.getElementById('mobileLyricsContainer');
     this.mobileLyricsInner = document.getElementById('mobileLyricsInner');
     this.desktopLyricsPane = document.getElementById('desktopLyricsPane');
@@ -73,12 +76,19 @@ class ElectronMusicPlayer {
     this.lastSseMessageTime = Date.now();
     this.sseWatchdogInterval = null;
     this.pendingAutoplay = false;
+    this.pendingSeekPosition = null;
+
+    // 主题与莫奈取色状态
+    this.themeMode = localStorage.getItem('qqmusic_web_theme') || 'system';
+    this.currentMonetH = 220;
+    this.currentMonetS = 0.2;
 
     this.init();
   }
 
   init() {
     this.bindEvents();
+    this.setupTheme();
     this.setupAudioListeners();
     this.connectSSE();
     this.startTicker();
@@ -133,21 +143,13 @@ class ElectronMusicPlayer {
     this.albumCover.addEventListener('load', () => {
       this.stageView.classList.remove('no-cover');
       this.albumCover.classList.remove('error');
-      const monet = this.extractMonetColors(this.albumCover);
-      if (monet) {
-        document.documentElement.style.setProperty('--play-monet-bg', monet.bg);
-      }
+      this.extractMonetColors(this.albumCover);
     });
 
     this.albumCover.addEventListener('error', () => {
-      // 若 CDN 封面失败且尚未尝试本地端点，优雅回退至本地提取接口
-      if (this.albumCover.src && !this.albumCover.src.includes('/cover')) {
-        this.albumCover.src = `/cover?mid=${encodeURIComponent(this.state.currentSong?.mid || '')}&t=${Date.now()}`;
-        return;
-      }
       this.stageView.classList.add('no-cover');
       this.albumCover.classList.add('error');
-      document.documentElement.style.setProperty('--play-monet-bg', '#1a1c22');
+      this.updateMonetCssVariables(220, 0.2);
     });
 
     // 喜欢按钮交互：双向绑定同步
@@ -233,32 +235,48 @@ class ElectronMusicPlayer {
           this.reconnectSSE();
         }
         if (this.pendingAutoplay && this.state.isPlaying && this.audioElement.src) {
-          this.audioElement.play().then(() => {
-            this.pendingAutoplay = false;
-            this.hideNotice();
-          }).catch(() => {});
+          this.audioElement
+            .play()
+            .then(() => {
+              this.pendingAutoplay = false;
+              this.hideNotice();
+            })
+            .catch(() => {});
         }
       }
     });
 
-    // 用户在页面任意触碰时，若存在被浏览器策略挂起的待播放曲目，立即静默触发起播
-    document.addEventListener('pointerdown', () => {
-      if (this.pendingAutoplay && this.state.isPlaying && this.audioElement.src) {
-        this.audioElement.play().then(() => {
-          this.pendingAutoplay = false;
-          this.hideNotice();
-        }).catch(() => {});
-      }
-    }, { passive: true });
+    // 用户在页面任意触碰时，若存在被浏览器策略挂起的待播放曲目，立即静默触发起播 (避开主播放按钮避免事件冲突)
+    document.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.target && (e.target.closest('#btnPlay') || e.target.closest('.btn-play-primary'))) {
+          return;
+        }
+        if (this.pendingAutoplay && this.state.isPlaying && this.audioElement.src) {
+          this.audioElement
+            .play()
+            .then(() => {
+              this.pendingAutoplay = false;
+              this.hideNotice();
+            })
+            .catch(() => {});
+        }
+      },
+      { passive: true }
+    );
 
     if (this.playbackNotice) {
       this.playbackNotice.addEventListener('click', (e) => {
         e.stopPropagation();
         if (this.pendingAutoplay && this.state.isPlaying && this.audioElement.src) {
-          this.audioElement.play().then(() => {
-            this.pendingAutoplay = false;
-            this.hideNotice();
-          }).catch(() => {});
+          this.audioElement
+            .play()
+            .then(() => {
+              this.pendingAutoplay = false;
+              this.hideNotice();
+            })
+            .catch(() => {});
         } else {
           this.hideNotice();
         }
@@ -312,8 +330,26 @@ class ElectronMusicPlayer {
       }
     });
 
-    this.audioElement.addEventListener('loadedmetadata', syncPosition);
-    this.audioElement.addEventListener('canplay', syncPosition);
+    const applyPendingSeek = () => {
+      if (this.pendingSeekPosition !== null && this.pendingSeekPosition > 0) {
+        const target = this.pendingSeekPosition;
+        this.pendingSeekPosition = null;
+        try {
+          if (this.audioElement.duration && target < this.audioElement.duration) {
+            this.audioElement.currentTime = target;
+          }
+        } catch (e) {}
+      }
+    };
+
+    this.audioElement.addEventListener('loadedmetadata', () => {
+      applyPendingSeek();
+      syncPosition();
+    });
+    this.audioElement.addEventListener('canplay', () => {
+      applyPendingSeek();
+      syncPosition();
+    });
     this.audioElement.addEventListener('durationchange', syncPosition);
 
     this.audioElement.addEventListener('play', () => {
@@ -357,6 +393,21 @@ class ElectronMusicPlayer {
   }
 
   togglePlay() {
+    // 关键防御：若界面显示为播放中但底层音频实际由于自动播放限制处于暂停状态，用户点击播放键应直接恢复播放，杜绝误判为用户想要暂停
+    if (this.state.isPlaying && this.audioElement.paused && this.audioElement.src) {
+      this.audioElement
+        .play()
+        .then(() => {
+          this.pendingAutoplay = false;
+          this.hideNotice();
+        })
+        .catch((err) => {
+          console.warn('Playback requires user gesture:', err);
+        });
+      this.updateMediaSessionPosition();
+      return;
+    }
+
     this.state.isPlaying = !this.state.isPlaying;
     this.updatePlayStateUI();
 
@@ -448,7 +499,9 @@ class ElectronMusicPlayer {
 
   connectSSE() {
     if (this.sse) {
-      try { this.sse.close(); } catch {}
+      try {
+        this.sse.close();
+      } catch {}
       this.sse = null;
     }
 
@@ -549,24 +602,29 @@ class ElectronMusicPlayer {
     // 3. 音频流地址更新
     if (data.streamUrl) {
       const streamUrl = data.streamUrl;
-      if (this.currentStreamUrl !== streamUrl) {
+      if (this.currentStreamUrl !== streamUrl || !this.audioElement.src) {
         this.currentStreamUrl = streamUrl;
         const targetSrc = streamUrl.startsWith('http')
           ? streamUrl
           : `${streamUrl}?mid=${encodeURIComponent(this.state.currentSongMid)}&t=${Date.now()}`;
         this.audioElement.src = targetSrc;
         if (data.position && data.position > 0) {
-          this.audioElement.currentTime = data.position;
+          this.pendingSeekPosition = data.position;
+        } else {
+          this.pendingSeekPosition = null;
         }
         if (data.isPlaying) {
-          this.audioElement.play().then(() => {
-            this.pendingAutoplay = false;
-            this.hideNotice();
-          }).catch((err) => {
-            console.warn('Autoplay waiting for gesture:', err);
-            this.pendingAutoplay = true;
-            this.showNotice('点击页面任意处开始播放');
-          });
+          this.audioElement
+            .play()
+            .then(() => {
+              this.pendingAutoplay = false;
+              this.hideNotice();
+            })
+            .catch((err) => {
+              console.warn('Autoplay waiting for gesture:', err);
+              this.pendingAutoplay = true;
+              this.showNotice('点击页面任意处开始播放');
+            });
         }
         this.updateMediaSessionPosition();
       }
@@ -579,14 +637,17 @@ class ElectronMusicPlayer {
 
       if (this.state.isPlaying) {
         if (this.audioElement.paused && this.audioElement.src) {
-          this.audioElement.play().then(() => {
-            this.pendingAutoplay = false;
-            this.hideNotice();
-          }).catch((err) => {
-            console.warn('Play gesture needed:', err);
-            this.pendingAutoplay = true;
-            this.showNotice('点击页面任意处开始播放');
-          });
+          this.audioElement
+            .play()
+            .then(() => {
+              this.pendingAutoplay = false;
+              this.hideNotice();
+            })
+            .catch((err) => {
+              console.warn('Play gesture needed:', err);
+              this.pendingAutoplay = true;
+              this.showNotice('点击页面任意处开始播放');
+            });
         }
       } else {
         if (!this.audioElement.paused) {
@@ -597,10 +658,15 @@ class ElectronMusicPlayer {
       this.updateMediaSessionPosition();
     }
 
-    // 5. 进度与总时长对齐 (仅在大偏差跳跃时修正系统通知栏，避免高频冲刷)
+    // 5. 进度与总时长对齐 (仅当音频就绪、不在 seeking 状态且差值大于 3.5 秒时校准，避免高频打断解码管线)
     if (data.position !== undefined && !this.isSeeking) {
       this.state.currentPosition = data.position;
-      if (this.audioElement.src && Math.abs(this.audioElement.currentTime - data.position) > 2.5) {
+      if (
+        this.audioElement.src &&
+        this.audioElement.readyState >= 2 &&
+        !this.audioElement.seeking &&
+        Math.abs(this.audioElement.currentTime - data.position) > 3.5
+      ) {
         this.audioElement.currentTime = data.position;
         this.updateMediaSessionPosition();
       }
@@ -687,14 +753,17 @@ class ElectronMusicPlayer {
       this.state.totalDuration = song.duration;
     }
 
-    // 优先直连官方 CDN 高清大图 (800x800 带缓存)，本地音乐或无 albumMid 回退本地提取端点
+    // 统一通过同源后端 /cover 接口拉取封面，具备 Access-Control-Allow-Origin 并避免外部 CDN 跨域阻断 Canvas
     if (midChanged || !this.albumCover.src || this.albumCover.src.endsWith('/cover')) {
       this.stageView.classList.remove('no-cover');
       this.albumCover.classList.remove('error');
-      if (!song.isLocal && song.albumMid) {
-        this.albumCover.src = `https://y.qq.com/music/photo_new/T002R800x800M000${encodeURIComponent(song.albumMid)}.jpg?max_age=2592000`;
-      } else {
-        this.albumCover.src = `/cover?mid=${encodeURIComponent(song.mid || '')}&t=${Date.now()}`;
+      const params = new URLSearchParams();
+      if (song.mid) params.set('mid', song.mid);
+      if (song.albumMid) params.set('albumMid', song.albumMid);
+      params.set('t', Date.now());
+      this.albumCover.src = `/cover?${params.toString()}`;
+      if (this.albumCover.complete && this.albumCover.naturalWidth > 0) {
+        this.extractMonetColors(this.albumCover);
       }
     }
 
@@ -834,15 +903,9 @@ class ElectronMusicPlayer {
         transEl.textContent = item.trans;
         elM.appendChild(transEl);
       }
-      elM.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.sendAction(`/api/seek?pos=${item.time.toFixed(1)}`);
-        this.audioElement.currentTime = item.time;
-        this.updateMediaSessionPosition();
-      });
       this.mobileLyricsInner.appendChild(elM);
 
-      // 桌面端 item (支持单句歌词点击快速跳转)
+      // 桌面端 item
       const elD = document.createElement('div');
       elD.className = 'lyric-item';
       elD.dataset.index = index;
@@ -853,12 +916,6 @@ class ElectronMusicPlayer {
         transEl.textContent = item.trans;
         elD.appendChild(transEl);
       }
-      elD.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.sendAction(`/api/seek?pos=${item.time.toFixed(1)}`);
-        this.audioElement.currentTime = item.time;
-        this.updateMediaSessionPosition();
-      });
       this.desktopLyricsInner.appendChild(elD);
     }
 
@@ -1011,6 +1068,87 @@ class ElectronMusicPlayer {
     }
   }
 
+  setupTheme() {
+    this.btnThemeToggle = document.getElementById('themeToggleBtn');
+    this.iconThemeLight = document.getElementById('iconThemeLight');
+    this.iconThemeDark = document.getElementById('iconThemeDark');
+    this.iconThemeAuto = document.getElementById('iconThemeAuto');
+
+    if (window.matchMedia) {
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+      mediaQuery.addEventListener('change', () => {
+        if (this.themeMode === 'system') {
+          this.applyTheme('system');
+        }
+      });
+    }
+
+    const cycleTheme = (e) => {
+      if (e) e.stopPropagation();
+      if (this.themeMode === 'system') {
+        this.themeMode = 'light';
+      } else if (this.themeMode === 'light') {
+        this.themeMode = 'dark';
+      } else {
+        this.themeMode = 'system';
+      }
+      localStorage.setItem('qqmusic_web_theme', this.themeMode);
+      this.applyTheme(this.themeMode);
+    };
+
+    if (this.btnThemeToggle) {
+      this.btnThemeToggle.addEventListener('click', cycleTheme);
+    }
+
+    this.applyTheme(this.themeMode);
+  }
+
+  isDarkTheme() {
+    if (this.themeMode === 'dark') return true;
+    if (this.themeMode === 'light') return false;
+    return Boolean(window.matchMedia?.('(prefers-color-scheme: dark)')?.matches);
+  }
+
+  applyTheme(mode) {
+    const isDark = this.isDarkTheme();
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+
+    if (this.iconThemeAuto && this.iconThemeLight && this.iconThemeDark) {
+      this.iconThemeAuto.style.display = mode === 'system' ? 'block' : 'none';
+      this.iconThemeLight.style.display = mode === 'light' ? 'block' : 'none';
+      this.iconThemeDark.style.display = mode === 'dark' ? 'block' : 'none';
+    }
+
+    const titleMap = {
+      system: `主题模式: 跟随系统 (${isDark ? '深色' : '浅色'})`,
+      light: '主题模式: 浅色模式',
+      dark: '主题模式: 深色模式',
+    };
+    if (this.btnThemeToggle) this.btnThemeToggle.title = titleMap[mode] || '切换深浅主题';
+
+    this.updateMonetCssVariables(this.currentMonetH, this.currentMonetS);
+  }
+
+  updateMonetCssVariables(targetHue, targetSat) {
+    this.currentMonetH = targetHue;
+    this.currentMonetS = targetSat;
+    const isDark = this.isDarkTheme();
+
+    if (isDark) {
+      // 深色主题: 对标 Electron 计算通透莫奈背景色 (L: 20%, S: 22%~42%)
+      const sPct = Math.min(Math.max(Math.round(targetSat * 70), 22), 42);
+      const lPct = 20;
+      const monetBg = `hsl(${targetHue}, ${sPct}%, ${lPct}%)`;
+      document.documentElement.style.setProperty('--play-monet-bg', monetBg);
+    } else {
+      // 浅色主题: 对标 Electron 计算微亮通透莫奈背景色 (L: 29%, S: 24%~44%)，确保白色操作按钮和文字具备高对比度
+      const sPct = Math.min(Math.max(Math.round(targetSat * 65), 24), 44);
+      const lPct = 29;
+      const monetBg = `hsl(${targetHue}, ${sPct}%, ${lPct}%)`;
+      document.documentElement.style.setProperty('--play-monet-bg', monetBg);
+    }
+  }
+
   extractMonetColors(img) {
     try {
       if (!img || !img.naturalWidth || !img.naturalHeight) return null;
@@ -1073,6 +1211,7 @@ class ElectronMusicPlayer {
       for (const bin of bins) {
         if (bin.count === 0) continue;
         const avgS = bin.sSum / bin.count;
+        // Google Material You 评分公式: 结合色彩鲜活性(S)与画面占比(Count)
         const score = bin.count ** 0.65 * avgS ** 1.25;
         if (score > bestScore) {
           bestScore = score;
@@ -1088,11 +1227,10 @@ class ElectronMusicPlayer {
         targetSat = bestBin.sSum / bestBin.count;
       }
 
-      // 莫奈背景色彩计算
-      const sPct = Math.min(Math.max(Math.round(targetSat * 70), 22), 42);
-      const lPct = 20;
+      this.updateMonetCssVariables(targetHue, targetSat);
       return {
-        bg: `hsl(${targetHue}, ${sPct}%, ${lPct}%)`,
+        hue: targetHue,
+        sat: targetSat,
       };
     } catch (e) {
       console.warn('extractMonetColors error:', e);
