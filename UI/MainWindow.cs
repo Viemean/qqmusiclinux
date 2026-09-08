@@ -52,6 +52,7 @@ public sealed partial class MainWindow : Window
     private readonly AodView _aodView;
     private bool _isAodMode = false;
     private bool _isSearchActive = false;
+    private readonly QuickSearchFloatingBar _quickSearchBar;
     private long _lastTransClickTicks;
     private readonly Label _lyricTransBtn;
     private readonly Label _lyricImmersiveBtn;
@@ -110,10 +111,11 @@ public sealed partial class MainWindow : Window
     private int _radioPlayedCount = 0;
     private bool _isRadioPrefetching = false;
 
-    // 列表随机播放（Shuffle 模式）Fisher-Yates 记忆队列
-    private readonly List<int> _shuffleIndices = [];
-    private int _shufflePointer = -1;
-    private int _shuffleSongCount = 0;
+    // 终端窗口前后台焦点状态与 ANSI 1004 Focus Reporting 过滤状态机
+    public static bool IsTerminalWindowFocused { get; private set; } = true;
+    private long _lastEscRcvTick = 0;
+    private bool _sawBracketAfterEsc = false;
+    private int _escSequenceCounter = 0;
 
     private readonly HashSet<string> _favoriteSongMids = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<long> _favoriteSongIds = [];
@@ -153,6 +155,7 @@ public sealed partial class MainWindow : Window
         _preferredQualityTier = AudioQualityHelper.Parse(UserSession.Current.PreferredQuality);
         _actualQualityTier = _preferredQualityTier;
         _currentPlaybackMode = UserSession.Current.PlaybackMode;
+        PlaybackQueueService.Instance.Mode = _currentPlaybackMode;
         int initialVolume = UserSession.Current.Volume > 0 ? UserSession.Current.Volume : 80;
         _preMuteVolume = initialVolume;
         _player.SetVolume(initialVolume);
@@ -199,13 +202,6 @@ public sealed partial class MainWindow : Window
         };
         _userStatusBtn.TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop;
         _userStatusBtn.KeyBindings.Remove(Key.Space);
-        _userStatusBtn.MouseEvent += (s, m) =>
-        {
-            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked))
-            {
-                ShowLoginDialog();
-            }
-        };
         _userStatusBtn.Accepting += (s, e) => ShowLoginDialog();
         Add(_userStatusBtn);
 
@@ -219,13 +215,6 @@ public sealed partial class MainWindow : Window
         };
         _recognizeBtn.TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop;
         _recognizeBtn.KeyBindings.Remove(Key.Space);
-        _recognizeBtn.MouseEvent += (s, m) =>
-        {
-            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked))
-            {
-                ShowAudioRecognitionDialog();
-            }
-        };
         _recognizeBtn.Accepting += (s, e) => ShowAudioRecognitionDialog();
         Add(_recognizeBtn);
 
@@ -239,13 +228,6 @@ public sealed partial class MainWindow : Window
         };
         _webBtn.TabStop = Terminal.Gui.ViewBase.TabBehavior.NoStop;
         _webBtn.KeyBindings.Remove(Key.Space);
-        _webBtn.MouseEvent += (s, m) =>
-        {
-            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked))
-            {
-                HandleWebButtonClicked();
-            }
-        };
         _webBtn.Accepting += (s, e) => HandleWebButtonClicked();
         Add(_webBtn);
 
@@ -386,8 +368,27 @@ public sealed partial class MainWindow : Window
             Y = 1
         };
         _songListView.Clicked += () => SetFocusToWindow(1);
+        _songListView.SongAccepted += async song =>
+        {
+            if (_currentViewMode != ViewMode.GuessRecommend && _songListView.Songs.Count > 0)
+            {
+                int curIdx = _songListView.SelectedItem ?? 0;
+                if (curIdx < 0 || curIdx >= _songListView.Songs.Count)
+                {
+                    curIdx = _songListView.Songs.ToList().FindIndex(s => s.Mid == song.Mid);
+                    if (curIdx < 0) curIdx = 0;
+                }
+                PlaybackQueueService.Instance.Mode = _currentPlaybackMode;
+                PlaybackQueueService.Instance.SetQueue(_songListView.Songs, curIdx);
+            }
+            await PlaySongAsync(song);
+        };
+        _songListView.SongPlayNextRequested += song =>
+        {
+            PlaybackQueueService.Instance.InsertNext(song);
+            _controlBar?.UpdateStatus($"下一首将播放: {song.Title} - {song.Artist}");
+        };
         _songListView.TabNavigationRequested += forward => SwitchNextFocusWindow(forward);
-        _songListView.SongAccepted += PlaySongAsync;
         _songListView.LoadMoreRequested += async () =>
         {
             if (_currentViewMode == ViewMode.Search)
@@ -415,6 +416,20 @@ public sealed partial class MainWindow : Window
             }
         };
         Add(_songListView);
+
+        // 3.5. 主列表即时查找悬浮窗 (G 键触发)
+        _quickSearchBar = new QuickSearchFloatingBar
+        {
+            X = Pos.Center(),
+            Y = 3
+        };
+        _quickSearchBar.SearchProvider = kw => _songListView.PerformInListSearch(kw);
+        _quickSearchBar.RowSelected += rowIdx => _songListView.ScrollToAndSelectItem(rowIdx);
+        _quickSearchBar.DismissRequested += () =>
+        {
+            _songListView.SetFocusToList();
+        };
+        Add(_quickSearchBar);
 
         _sidebarList.Accepted += async (s, e) =>
         {
@@ -775,7 +790,7 @@ public sealed partial class MainWindow : Window
         // 底部快捷键操作指南（独立放置在控制栏UI方框下方最底行，干净平整无边框干扰）
         _hotkeyHintLabel = new Label
         {
-            Text = " [V]播放界面  [P]沉浸  [O]播放顺序  [S]收藏  [T]翻译  [/]搜索  [J]上一首  [L]下一首  [M]静音  [R]识曲  [W]Web",
+            Text = " [V]播放界面  [P]沉浸  [O]播放顺序  [N]插队  [E]队列  [G]过滤  [S]收藏  [T]翻译  [/]搜索  [J]上一首  [L]下一首  [M]静音  [R]识曲  [W]Web",
             X = 0,
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
@@ -881,6 +896,7 @@ public sealed partial class MainWindow : Window
         {
             Application.Invoke(UpdateFrameBorderHighlights);
         };
+        _nowPlayingView.ShowQueueRequested += ShowQueueDrawerDialog;
         Add(_nowPlayingView);
         _aodView = new AodView
         {
@@ -921,6 +937,7 @@ public sealed partial class MainWindow : Window
         // 鼠标活动唤醒沉浸模式下自动隐藏的图标与刷新无操作看门狗
         MouseEvent += (s, m) =>
         {
+            IsTerminalWindowFocused = true;
             _lastUserActivityTick = Environment.TickCount64;
             TriggerImmersiveActivity();
         };
@@ -928,10 +945,141 @@ public sealed partial class MainWindow : Window
         // 全局顶层按键预捕获，除搜索框文字输入外，统一拦截分发全局播放与视图快捷键
         Application.KeyDown += async (s, k) =>
         {
+            // 0. ANSI 1004 Focus Reporting 状态机与失焦/后台按键拦截
+            // ESC 键可能是独立物理按压，也可能是 \x1b[O (Focus Out) 或 \x1b[I (Focus In) 的前导字符
+            if (k == Key.Esc)
+            {
+                k.Handled = true;
+                _lastEscRcvTick = Environment.TickCount64;
+                _sawBracketAfterEsc = false;
+
+                int currentEscId = Interlocked.Increment(ref _escSequenceCounter);
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(25);
+                    if (Volatile.Read(ref _escSequenceCounter) == currentEscId && !_sawBracketAfterEsc)
+                    {
+                        Application.Invoke(async () =>
+                        {
+                            if (!IsTerminalWindowFocused)
+                            {
+                                return;
+                            }
+
+                            // 1. 若当前处于任何弹窗（Dialog/Window/Modal）中，立即单次关闭该弹窗退出
+                            if (Application.TopRunnableView != null && Application.TopRunnableView != this)
+                            {
+                                if (Application.TopRunnableView is LoginDialog loginDlg)
+                                {
+                                    loginDlg.CloseSelf();
+                                }
+                                else if (Application.TopRunnableView is IRunnable runnable)
+                                {
+                                    Application.RequestStop(runnable);
+                                }
+                                else
+                                {
+                                    Application.RequestStop();
+                                }
+                                return;
+                            }
+
+                            // 1.5. 列表即时查找浮窗处于显示状态时，按 Esc 优先收起
+                            if (_quickSearchBar.Visible)
+                            {
+                                _quickSearchBar.Dismiss();
+                                return;
+                            }
+
+                            // 2. 搜索框处于激活状态时，按 Esc 退出搜索模式恢复焦点
+                            if (_isSearchActive || _searchField.HasFocus)
+                            {
+                                _isSearchActive = false;
+                                _searchField.CanFocus = false;
+                                _songListView?.SetFocusToList();
+                                Application.Invoke(UpdateFrameBorderHighlights);
+                                return;
+                            }
+
+                            // 3. 主界面真实 Esc 处理
+                            await HandleRealEscapeKeyAsync();
+                        });
+                    }
+                });
+                return;
+            }
+
+            // 检查是否紧随 Esc 之后的 '['
+            if (Environment.TickCount64 - _lastEscRcvTick < 100 && k.AsRune.Value == '[')
+            {
+                _sawBracketAfterEsc = true;
+                k.Handled = true;
+                return;
+            }
+
+            // 检查是否紧随 Esc [ 之后的 Focus 字符 ('O' 为 Focus Out, 'I' 为 Focus In)
+            if (_sawBracketAfterEsc && Environment.TickCount64 - _lastEscRcvTick < 150)
+            {
+                _sawBracketAfterEsc = false;
+                k.Handled = true;
+                char fc = char.ToUpperInvariant((char)k.AsRune.Value);
+                if (fc == 'O')
+                {
+                    IsTerminalWindowFocused = false;
+                }
+                else if (fc == 'I')
+                {
+                    IsTerminalWindowFocused = true;
+                }
+                return;
+            }
+
+            // 终端窗口失焦（被桌面其它窗口覆盖或处于后台）时，丢弃所有后续按键，不响应任何操作
+            if (!IsTerminalWindowFocused)
+            {
+                k.Handled = true;
+                return;
+            }
+
             _lastUserActivityTick = Environment.TickCount64;
             TriggerImmersiveActivity();
 
-            // 1. 若当前处于弹窗（Dialog/Modal）中，不拦截按键，交由弹窗处理
+            // 1. 若当前处于播放列表抽屉弹窗（QueueDrawerDialog）中，顶层直连分发快捷键，避免子控件字符搜索吞噬
+            if (Application.TopRunnableView is QueueDrawerDialog queueDrawer)
+            {
+                bool isD = k == Key.DeleteChar || k == Key.D || k == Key.D.WithShift ||
+                           k.AsRune.Value == 'd' || k.AsRune.Value == 'D' ||
+                           k.ToString().Equals("d", StringComparison.OrdinalIgnoreCase) ||
+                           k.ToString().Equals("Key.D", StringComparison.OrdinalIgnoreCase);
+                if (isD)
+                {
+                    k.Handled = true;
+                    queueDrawer.RemoveCurrentSelectedItem();
+                    return;
+                }
+
+                bool isC = k == Key.C || k == Key.C.WithShift ||
+                           k.AsRune.Value == 'c' || k.AsRune.Value == 'C' ||
+                           k.ToString().Equals("c", StringComparison.OrdinalIgnoreCase) ||
+                           k.ToString().Equals("Key.C", StringComparison.OrdinalIgnoreCase);
+                if (isC)
+                {
+                    k.Handled = true;
+                    queueDrawer.ClearUpcomingSongs();
+                    return;
+                }
+
+                if (k == Key.Enter || k.AsRune.Value == '\r' || k.AsRune.Value == '\n')
+                {
+                    k.Handled = true;
+                    queueDrawer.PlayCurrentSelectedItem();
+                    return;
+                }
+
+                return;
+            }
+
+            // 若当前处于其它弹窗（Dialog/Modal）中，不拦截按键，交由弹窗处理
             if (Application.TopRunnableView != null && Application.TopRunnableView != this)
             {
                 return;
@@ -998,41 +1146,6 @@ public sealed partial class MainWindow : Window
             }
 
             char c = char.ToUpperInvariant((char)k.AsRune.Value);
-
-            if (k == Key.Esc)
-            {
-                k.Handled = true;
-                if (_isImmersiveMode)
-                {
-                    ApplyImmersiveMode(false);
-                    return;
-                }
-                if (_isNowPlayingViewActive)
-                {
-                    CloseNowPlayingView();
-                }
-                else if (_navigationStack.Count > 0)
-                {
-                    PopNavigationSnapshot();
-                }
-                else if (_artistAlbumDetailView.Visible)
-                {
-                    ShowLyricView();
-                }
-                else if (_currentDrilldownPlaylist != null)
-                {
-                    await LoadPlaylistsAsync();
-                }
-                else if (_currentDrilldownAlbum != null)
-                {
-                    await LoadFavoriteAlbumsAsync();
-                }
-                else
-                {
-                    EnterAodMode();
-                }
-                return;
-            }
 
             if (_currentViewMode == ViewMode.ArtistDetail && !_isSearchActive)
             {
@@ -1152,6 +1265,36 @@ public sealed partial class MainWindow : Window
             {
                 k.Handled = true;
                 ShowLoginDialog();
+                return;
+            }
+
+            if (c == 'N')
+            {
+                k.Handled = true;
+                if (_currentViewMode != ViewMode.GuessRecommend && _songListView.Songs.Count > 0)
+                {
+                    int curIdx = _songListView.SelectedItem ?? -1;
+                    if (curIdx >= 0 && curIdx < _songListView.Songs.Count)
+                    {
+                        var song = _songListView.Songs[curIdx];
+                        PlaybackQueueService.Instance.InsertNext(song);
+                        _controlBar?.UpdateStatus($"下一首将播放: {song.Title} - {song.Artist}");
+                    }
+                }
+                return;
+            }
+
+            if (c == 'E')
+            {
+                k.Handled = true;
+                ShowQueueDrawerDialog();
+                return;
+            }
+
+            if (c == 'G')
+            {
+                k.Handled = true;
+                ToggleQuickSearch();
                 return;
             }
 
@@ -1320,8 +1463,7 @@ public sealed partial class MainWindow : Window
         if (UserSession.Current.IsLoggedIn)
         {
             var name = string.IsNullOrEmpty(UserSession.Current.Nick) ? UserSession.Current.Uin : UserSession.Current.Nick;
-            var vipSuffix = UserSession.Current.IsVip ? " [VIP]" : "";
-            return $"账号: {name}{vipSuffix}";
+            return $"账号: {name}";
         }
         return "未登录 (按 U 登录)";
     }
@@ -2213,12 +2355,7 @@ public sealed partial class MainWindow : Window
     private void SetPlaybackMode(PlaybackMode mode)
     {
         _currentPlaybackMode = mode;
-        if (mode == PlaybackMode.Shuffle)
-        {
-            _shufflePointer = -1;
-            _shuffleSongCount = 0;
-            _shuffleIndices.Clear();
-        }
+        PlaybackQueueService.Instance.Mode = mode;
         UserSession.Current.PlaybackMode = mode;
         UserSession.Current.Save();
         _controlBar.UpdatePlaybackMode(mode);
@@ -2383,5 +2520,52 @@ public sealed partial class MainWindow : Window
         UpdateFrameBorderHighlights();
         SetNeedsDraw();
         AppLogger.Info("MainWindow", "Exited AOD background display mode");
+    }
+
+    private async Task HandleRealEscapeKeyAsync()
+    {
+        if (_isImmersiveMode)
+        {
+            ApplyImmersiveMode(false);
+            return;
+        }
+        if (_isNowPlayingViewActive)
+        {
+            CloseNowPlayingView();
+        }
+        else if (_navigationStack.Count > 0)
+        {
+            PopNavigationSnapshot();
+        }
+        else if (_artistAlbumDetailView.Visible)
+        {
+            ShowLyricView();
+        }
+        else if (_currentDrilldownPlaylist != null)
+        {
+            await LoadPlaylistsAsync();
+        }
+        else if (_currentDrilldownAlbum != null)
+        {
+            await LoadFavoriteAlbumsAsync();
+        }
+        else
+        {
+            EnterAodMode();
+        }
+    }
+
+    private void ToggleQuickSearch()
+    {
+        if (_isSearchActive) return;
+
+        if (_quickSearchBar.Visible)
+        {
+            _quickSearchBar.Dismiss();
+        }
+        else
+        {
+            _quickSearchBar.ShowAndFocus();
+        }
     }
 }

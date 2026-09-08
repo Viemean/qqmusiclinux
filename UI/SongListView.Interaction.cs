@@ -160,4 +160,62 @@ public sealed partial class SongListView
             SetMarqueeTitle($"《{selSong.Title}》 · {subHint}");
         }
     }
+
+    /// <summary>
+    /// 平滑滚动到指定行并选中该行（居中视口与更新滚动条）
+    /// </summary>
+    public bool ScrollToAndSelectItem(int targetIdx)
+    {
+        if (_isRadioMode) return false;
+
+        int totalCount = _songs.Count > 0 ? _songs.Count : _customItems.Count;
+        if (targetIdx < 0 || targetIdx >= totalCount) return false;
+
+        _listView.SelectedItem = targetIdx;
+        int viewH = _listView.Viewport.Height > 0 ? _listView.Viewport.Height : 20;
+        int targetTop = Math.Max(0, targetIdx - (viewH / 2));
+        _listView.Viewport = new Rectangle(_listView.Viewport.X, targetTop, _listView.Viewport.Width, _listView.Viewport.Height);
+        _scrollBar.UpdateMetrics(totalCount, _listView.Viewport.Height, targetTop);
+        UpdateFocusedRowDisplay();
+        UpdateSubColumnTitle(targetIdx);
+        _listView.SetNeedsDraw();
+        return true;
+    }
+
+    /// <summary>
+    /// 在当前歌曲列表或自定义列表中执行即时行粒度查找与去重
+    /// </summary>
+    public List<int> PerformInListSearch(string keyword)
+    {
+        var matched = new List<int>();
+        if (string.IsNullOrWhiteSpace(keyword)) return matched;
+
+        var kw = keyword.Trim();
+        if (_songs.Count > 0)
+        {
+            for (int i = 0; i < _songs.Count; i++)
+            {
+                var s = _songs[i];
+                // 行粒度去重：单行内无论命中 Title、Artist 还是 Album，仅录入一次
+                if ((s.Title?.Contains(kw, StringComparison.OrdinalIgnoreCase) == true) ||
+                    (s.Artist?.Contains(kw, StringComparison.OrdinalIgnoreCase) == true) ||
+                    (s.Album?.Contains(kw, StringComparison.OrdinalIgnoreCase) == true))
+                {
+                    matched.Add(i);
+                }
+            }
+        }
+        else if (_customItems.Count > 0)
+        {
+            for (int i = 0; i < _customItems.Count; i++)
+            {
+                if (_customItems[i].Contains(kw, StringComparison.OrdinalIgnoreCase))
+                {
+                    matched.Add(i);
+                }
+            }
+        }
+
+        return matched;
+    }
 }

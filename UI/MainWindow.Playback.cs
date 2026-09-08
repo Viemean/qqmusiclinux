@@ -23,6 +23,7 @@ public sealed partial class MainWindow
     private async Task PlaySongAsync(Song song, double startPosition = 0)
     {
         _activeSong = song;
+        PlaybackQueueService.Instance.SyncCurrentSong(song);
         _songListView.SetPlayingSong(song.Mid);
 
         // 电台模式下实时更新专属电台卡片
@@ -763,30 +764,9 @@ public sealed partial class MainWindow
                     nextSong = _radioQueue[_radioIndex + 1];
                 }
             }
-            else if (_songListView.Songs.Count > 1)
+            else
             {
-                var songs = _songListView.Songs;
-                if (_currentPlaybackMode == PlaybackMode.Shuffle)
-                {
-                    if (_shufflePointer >= 0 && _shufflePointer + 1 < _shuffleIndices.Count)
-                    {
-                        int nextIdx = _shuffleIndices[_shufflePointer + 1];
-                        if (nextIdx >= 0 && nextIdx < songs.Count) nextSong = songs[nextIdx];
-                    }
-                }
-                else
-                {
-                    int curIdx = -1;
-                    for (int i = 0; i < songs.Count; i++)
-                    {
-                        if (songs[i].Mid == _activeSong?.Mid) { curIdx = i; break; }
-                    }
-                    if (curIdx >= 0)
-                    {
-                        int nextIdx = (curIdx + 1) % songs.Count;
-                        nextSong = songs[nextIdx];
-                    }
-                }
+                nextSong = PlaybackQueueService.Instance.PeekNextSong();
             }
 
             if (nextSong != null && !nextSong.IsLocal && !string.IsNullOrEmpty(nextSong.Mid))

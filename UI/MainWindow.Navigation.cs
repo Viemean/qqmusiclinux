@@ -1,6 +1,7 @@
 using Terminal.Gui.App;
 using QQMusic.Tui.Api;
 using QQMusic.Tui.Models;
+using QQMusic.Tui.Services;
 
 namespace QQMusic.Tui.UI;
 
@@ -417,61 +418,16 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// 普通歌单列表：播放下一首
+    /// 普通歌单列表：播放下一首（基于独立播放队列推演）
     /// </summary>
     private async Task PlayNextInCurrentListAsync(bool isAutoPlayback = false)
     {
-        if (_songListView.Songs.Count == 0 || _activeSong == null) return;
-        var songs = _songListView.Songs;
-        int currentIdx = -1;
-        for (int i = 0; i < songs.Count; i++)
+        var queue = PlaybackQueueService.Instance;
+        queue.Mode = _currentPlaybackMode;
+        var nextSong = queue.GetNextSong(isAutoPlayback);
+        if (nextSong != null)
         {
-            if (songs[i].Mid == _activeSong.Mid)
-            {
-                currentIdx = i;
-                break;
-            }
-        }
-
-        // 随机播放模式 (Fisher-Yates 洗牌记忆队列，整轮播完前绝不重复)
-        if (_currentPlaybackMode == PlaybackMode.Shuffle && songs.Count > 1)
-        {
-            EnsureShuffleQueue(songs.Count, currentIdx);
-
-            _shufflePointer++;
-            if (_shufflePointer >= _shuffleIndices.Count)
-            {
-                int lastSongIdx = _shuffleIndices[^1];
-                RebuildShuffleQueue(songs.Count, -1);
-                if (_shuffleIndices.Count > 1 && _shuffleIndices[0] == lastSongIdx)
-                {
-                    int swapTarget = 1 + Random.Shared.Next(_shuffleIndices.Count - 1);
-                    (_shuffleIndices[0], _shuffleIndices[swapTarget]) = (_shuffleIndices[swapTarget], _shuffleIndices[0]);
-                }
-                _shufflePointer = 0;
-            }
-
-            int nextIdx = _shuffleIndices[_shufflePointer];
-            await PlaySongAsync(songs[nextIdx]);
-            return;
-        }
-
-        // 列表循环模式 (或单曲循环模式下用户主动按切歌键)
-        if (_currentPlaybackMode == PlaybackMode.ListLoop || (!isAutoPlayback && _currentPlaybackMode == PlaybackMode.SingleLoop))
-        {
-            int nextIdx = (currentIdx + 1) % songs.Count;
-            await PlaySongAsync(songs[nextIdx]);
-            return;
-        }
-
-        // 顺序播放模式
-        if (currentIdx >= 0 && currentIdx + 1 < songs.Count)
-        {
-            await PlaySongAsync(songs[currentIdx + 1]);
-        }
-        else if (!isAutoPlayback && currentIdx == -1 && songs.Count > 0)
-        {
-            await PlaySongAsync(songs[0]);
+            await PlaySongAsync(nextSong);
         }
         else if (isAutoPlayback && _currentPlaybackMode == PlaybackMode.Sequential)
         {
@@ -482,111 +438,16 @@ public sealed partial class MainWindow
     }
 
     /// <summary>
-    /// 普通歌单列表：播放上一首
+    /// 普通歌单列表：播放上一首（基于独立播放队列推演）
     /// </summary>
     private async Task PlayPrevInCurrentListAsync()
     {
-        if (_songListView.Songs.Count == 0 || _activeSong == null) return;
-        var songs = _songListView.Songs;
-        int currentIdx = -1;
-        for (int i = 0; i < songs.Count; i++)
+        var queue = PlaybackQueueService.Instance;
+        queue.Mode = _currentPlaybackMode;
+        var prevSong = queue.GetPrevSong();
+        if (prevSong != null)
         {
-            if (songs[i].Mid == _activeSong.Mid)
-            {
-                currentIdx = i;
-                break;
-            }
+            await PlaySongAsync(prevSong);
         }
-
-        // 随机播放模式 (回溯上一首已播随机曲目)
-        if (_currentPlaybackMode == PlaybackMode.Shuffle && songs.Count > 1)
-        {
-            EnsureShuffleQueue(songs.Count, currentIdx);
-
-            if (_shufflePointer > 0)
-            {
-                _shufflePointer--;
-            }
-            else
-            {
-                _shufflePointer = _shuffleIndices.Count - 1;
-            }
-
-            int prevIdx = _shuffleIndices[_shufflePointer];
-            await PlaySongAsync(songs[prevIdx]);
-            return;
-        }
-
-        // 列表循环模式 (或单曲循环模式下用户主动切上一首)
-        if (_currentPlaybackMode == PlaybackMode.ListLoop || _currentPlaybackMode == PlaybackMode.SingleLoop)
-        {
-            int prevIdx = (currentIdx - 1 + songs.Count) % songs.Count;
-            await PlaySongAsync(songs[prevIdx]);
-            return;
-        }
-
-        // 顺序播放模式
-        if (currentIdx > 0)
-        {
-            await PlaySongAsync(songs[currentIdx - 1]);
-        }
-    }
-
-    private void EnsureShuffleQueue(int count, int currentIdx)
-    {
-        if (count <= 1)
-        {
-            _shuffleIndices.Clear();
-            _shufflePointer = -1;
-            _shuffleSongCount = count;
-            return;
-        }
-
-        if (_shuffleIndices.Count == count && _shuffleSongCount == count && _shufflePointer >= 0 && _shufflePointer < _shuffleIndices.Count)
-        {
-            if (currentIdx >= 0 && _shuffleIndices[_shufflePointer] != currentIdx)
-            {
-                int p = _shuffleIndices.IndexOf(currentIdx);
-                if (p >= 0)
-                {
-                    _shufflePointer = p;
-                }
-            }
-            return;
-        }
-
-        RebuildShuffleQueue(count, currentIdx);
-    }
-
-    private void RebuildShuffleQueue(int count, int currentIdx)
-    {
-        _shuffleIndices.Clear();
-        for (int i = 0; i < count; i++)
-        {
-            _shuffleIndices.Add(i);
-        }
-
-        // Fisher-Yates 洗牌算法
-        for (int i = count - 1; i > 0; i--)
-        {
-            int j = Random.Shared.Next(i + 1);
-            (_shuffleIndices[i], _shuffleIndices[j]) = (_shuffleIndices[j], _shuffleIndices[i]);
-        }
-
-        if (currentIdx >= 0)
-        {
-            int p = _shuffleIndices.IndexOf(currentIdx);
-            if (p >= 0)
-            {
-                (_shuffleIndices[0], _shuffleIndices[p]) = (_shuffleIndices[p], _shuffleIndices[0]);
-            }
-            _shufflePointer = 0;
-        }
-        else
-        {
-            _shufflePointer = -1;
-        }
-
-        _shuffleSongCount = count;
     }
 }

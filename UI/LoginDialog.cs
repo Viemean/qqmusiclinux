@@ -11,11 +11,24 @@ using QQMusic.Tui.Services;
 
 namespace QQMusic.Tui.UI;
 
-public sealed class LoginDialog : Window
+public sealed class LoginDialog : Dialog
 {
     private readonly Action _onLoginSuccess;
     private readonly CancellationTokenSource _cts = new();
     private LoginHttpServer? _httpServer;
+
+    private static Scheme TransparentDialogScheme { get; } = new Scheme
+    {
+        Normal    = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextWhite, Color.None),
+        Focus     = new Terminal.Gui.Drawing.Attribute(Color.White, MikuTheme.QqGreenDark),
+        HotNormal = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuPinkAccent, Color.None),
+        HotFocus  = new Terminal.Gui.Drawing.Attribute(Color.White, MikuTheme.MikuPinkAccent),
+        Disabled  = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Color.None),
+        Highlight = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenPrimary, Color.None),
+        Active    = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqGreenLight, MikuTheme.QqGreenDark),
+        ReadOnly  = new Terminal.Gui.Drawing.Attribute(MikuTheme.MikuTextMuted, Color.None),
+        Editable  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.None)
+    };
 
     // 1. 网页登录容器 (默认首选)
     private readonly View _webContainer;
@@ -35,36 +48,31 @@ public sealed class LoginDialog : Window
         _onLoginSuccess = onLoginSuccess;
 
         Title = "用户登录";
-        Width = 66;
+        Width = 68;
         Height = 28;
-        SetScheme(MikuTheme.Dialog);
+        X = Pos.Center();
+        Y = Pos.Center();
+        SetScheme(TransparentDialogScheme);
 
         // 顶部切换按钮
         var webTabBtn = new Button
         {
-            Text = "网页登录 (Web)",
+            Text = "网页登录 (W)",
             X = 2,
             Y = 0
         };
 
         var qrTabBtn = new Button
         {
-            Text = "终端扫码",
+            Text = "终端扫码 (T)",
             X = Pos.Right(webTabBtn) + 2,
-            Y = 0
-        };
-
-        var refreshBtn = new Button
-        {
-            Text = "刷新 (R)",
-            X = Pos.Right(qrTabBtn) + 2,
             Y = 0
         };
 
         var logoutBtn = new Button
         {
             Text = "退出账号",
-            X = Pos.Right(refreshBtn) + 2,
+            X = Pos.Right(qrTabBtn) + 2,
             Y = 0
         };
 
@@ -75,7 +83,7 @@ public sealed class LoginDialog : Window
             Y = 0
         };
 
-        Add(webTabBtn, qrTabBtn, refreshBtn, logoutBtn, closeBtn);
+        Add(webTabBtn, qrTabBtn, logoutBtn, closeBtn);
 
         // ==================== 1. 网页登录容器 (默认激活) ====================
         _webContainer = new View
@@ -176,8 +184,10 @@ public sealed class LoginDialog : Window
             X = 2,
             Y = 1,
             Width = 40,
-            Height = 20
+            Height = 20,
+            CanFocus = false
         };
+        _qrView.SetScheme(TransparentDialogScheme);
         _qrContainer.Add(_qrView);
 
         _qrTipLabel = new Label
@@ -192,19 +202,24 @@ public sealed class LoginDialog : Window
         Add(_qrContainer);
 
         // ==================== 事件交互处理 ====================
-        webTabBtn.Accepting += (s, e) =>
+        void SwitchToWebTab()
         {
             _webContainer.Visible = true;
             _qrContainer.Visible = false;
-        };
+            webTabBtn.SetFocus();
+            SetNeedsDraw();
+        }
 
-        qrTabBtn.Accepting += (s, e) =>
+        void SwitchToQrTab()
         {
             _webContainer.Visible = false;
             _qrContainer.Visible = true;
-        };
+            qrTabBtn.SetFocus();
+            SetNeedsDraw();
+        }
 
-        refreshBtn.Accepting += (s, e) => RequestRefresh();
+        webTabBtn.Accepting += (s, e) => SwitchToWebTab();
+        qrTabBtn.Accepting += (s, e) => SwitchToQrTab();
 
         logoutBtn.Accepting += (s, e) =>
         {
@@ -219,27 +234,42 @@ public sealed class LoginDialog : Window
 
         KeyDown += (s, k) =>
         {
-            if (k == Key.Esc)
+            if (k == Key.Esc || k.AsRune.Value == 'q' || k.AsRune.Value == 'Q')
             {
                 k.Handled = true;
                 CloseSelf();
+                return;
             }
-            else if (k.AsRune.Value == 'r' || k.AsRune.Value == 'R')
+
+            char c = char.ToUpperInvariant((char)k.AsRune.Value);
+            if (c == 'W')
+            {
+                k.Handled = true;
+                SwitchToWebTab();
+                return;
+            }
+            if (c == 'T')
+            {
+                k.Handled = true;
+                SwitchToQrTab();
+                return;
+            }
+            if (c == 'R')
             {
                 k.Handled = true;
                 RequestRefresh();
+                return;
             }
-            else if ((k.AsRune.Value == 'b' || k.AsRune.Value == 'B') && _httpServer != null && _httpServer.IsRunning)
+            if (c == 'B' && _httpServer != null && _httpServer.IsRunning)
             {
                 k.Handled = true;
                 TryOpenBrowser(_httpServer.LocalUrl);
+                return;
             }
         };
 
         // 启动网络扫码服务与轮询
         StartQrLoginFlow();
-
-        MikuTheme.ApplyTo(this, MikuTheme.Dialog);
     }
 
     private volatile bool _refreshRequested;
@@ -392,7 +422,7 @@ public sealed class LoginDialog : Window
         }
     }
 
-    private void CloseSelf()
+    public void CloseSelf()
     {
         try
         {
@@ -412,6 +442,13 @@ public sealed class LoginDialog : Window
         }
 
         Application.RequestStop(this);
+    }
+
+    protected override bool OnAccepting(CommandEventArgs? args)
+    {
+        // 阻断基类 Dialog 默认将内部任意 Button 的 Accepting 冒泡作为 RequestStop() 的行为。
+        // LoginDialog 的退出由 closeBtn 与 Esc/Q 快捷键显式调用 CloseSelf() 负责。
+        return false;
     }
 
     protected override void Dispose(bool disposing)

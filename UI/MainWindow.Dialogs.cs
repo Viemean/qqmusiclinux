@@ -13,17 +13,28 @@ namespace QQMusic.Tui.UI;
 
 public sealed partial class MainWindow
 {
+    private bool _isLoginDialogOpen = false;
+
     private void ShowLoginDialog()
     {
-        var dlg = new LoginDialog(() =>
+        if (_isLoginDialogOpen) return;
+        _isLoginDialogOpen = true;
+        try
         {
-            Application.Invoke(() =>
+            var dlg = new LoginDialog(() =>
             {
-                UpdateTopRightButtonsLayout();
+                Application.Invoke(() =>
+                {
+                    UpdateTopRightButtonsLayout();
+                });
             });
-        });
-        Application.Run(dlg);
-        UpdateTopRightButtonsLayout();
+            Application.Run(dlg);
+            UpdateTopRightButtonsLayout();
+        }
+        finally
+        {
+            _isLoginDialogOpen = false;
+        }
     }
 
     private void ShowQualityDialog()
@@ -342,14 +353,20 @@ public sealed partial class MainWindow
         }
     }
 
+    private bool _isWebDialogOpen = false;
+
     private void ShowWebStatusDialog(string url)
     {
-        var dlg = new Dialog
+        if (_isWebDialogOpen) return;
+        _isWebDialogOpen = true;
+        try
         {
-            Title = "Web 协同服务配置",
-            Width = 64,
-            Height = 11
-        };
+            var dlg = new Dialog
+            {
+                Title = "Web 协同服务配置",
+                Width = 64,
+                Height = 11
+            };
 
         string GetAddressText(int port)
         {
@@ -551,5 +568,35 @@ public sealed partial class MainWindow
         MikuTheme.ApplyTo(dlg, TransparentDialogScheme);
         closeBtn.SetFocus();
         Application.Run(dlg);
+        }
+        finally
+        {
+            _isWebDialogOpen = false;
+        }
+    }
+
+    private bool _isQueueDrawerOpen = false;
+
+    private void ShowQueueDrawerDialog()
+    {
+        if (_isQueueDrawerOpen) return;
+        _isQueueDrawerOpen = true;
+        try
+        {
+            using var dlg = new QueueDrawerDialog();
+            Application.Run(dlg);
+            if (dlg.SelectedSongToPlay != null)
+            {
+                var target = dlg.SelectedSongToPlay;
+                _ = Task.Run(async () =>
+                {
+                    await PlaySongAsync(target);
+                });
+            }
+        }
+        finally
+        {
+            _isQueueDrawerOpen = false;
+        }
     }
 }

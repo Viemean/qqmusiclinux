@@ -34,6 +34,7 @@ public sealed partial class SongListView : FrameView
     public event Func<Task>? LoadMoreRequested;
     public event Action<Song>? ArtistClicked;
     public event Action<Song>? AlbumClicked;
+    public event Action<Song>? SongPlayNextRequested;
 
     public IReadOnlyList<Song> Songs => _songs;
     public int? SelectedItem => _listView.SelectedItem;
@@ -248,6 +249,18 @@ public sealed partial class SongListView : FrameView
             }
 
             if (_isRadioMode) return;
+
+            char c = char.ToUpperInvariant((char)k.AsRune.Value);
+            if (c == 'N')
+            {
+                int curIdx = _listView.SelectedItem ?? -1;
+                if (curIdx >= 0 && curIdx < _songs.Count)
+                {
+                    k.Handled = true;
+                    SongPlayNextRequested?.Invoke(_songs[curIdx]);
+                    return;
+                }
+            }
 
             if (k == Key.CursorLeft)
             {

@@ -70,6 +70,7 @@ public sealed class NowPlayingView : View
     public event Action<Song>? AlbumDrilldownRequested;
     public event Action? FocusControlBarRequested;
     public event Action? FocusChangedNotification;
+    public event Action? ShowQueueRequested;
 
     public NowPlayingView()
     {
@@ -382,6 +383,13 @@ public sealed class NowPlayingView : View
             TriggerInteractiveActivity();
 
             var ch = char.ToUpperInvariant((char)k.AsRune.Value);
+            if (ch == 'E')
+            {
+                ShowQueueRequested?.Invoke();
+                k.Handled = true;
+                return;
+            }
+
             if (ch == 'P')
             {
                 ToggleImmersiveRequested?.Invoke();

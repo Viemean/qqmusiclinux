@@ -163,6 +163,13 @@ public static partial class Program
                 {
                     Application.Driver.Force16Colors = false;
                 }
+                try
+                {
+                    Console.Out.Write("\x1b[?1004h");
+                    Console.Out.Flush();
+                }
+                catch { }
+
                 MikuTheme.Apply();
 
                 var mainWindow = new MainWindow(player, useWebMode);
@@ -181,6 +188,13 @@ public static partial class Program
                 }
                 finally
                 {
+                    try
+                    {
+                        Console.Out.Write("\x1b[?1004l");
+                        Console.Out.Flush();
+                    }
+                    catch { }
+
                     try
                     {
                         Application.Shutdown();
