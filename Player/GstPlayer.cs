@@ -378,6 +378,10 @@ public sealed partial class GstPlayer : IPlayer
                 {
                     if (_disposed || _pipeline == 0) continue;
                     success = gst_element_query_position(_pipeline, GST_FORMAT_TIME, out posNs);
+                    if (TotalDurationSeconds <= 0 && gst_element_query_duration(_pipeline, GST_FORMAT_TIME, out long durNs) && durNs > 0)
+                    {
+                        TotalDurationSeconds = durNs / 1_000_000_000.0;
+                    }
                 }
 
                 if (success && posNs >= 0)

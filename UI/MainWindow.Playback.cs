@@ -26,6 +26,12 @@ public sealed partial class MainWindow
     private CancellationTokenSource? _playbackCts;
     private long _playbackSessionId;
 
+    // 收听满 30 秒门限流式持久化缓存状态机
+    private bool _hasTriggeredCacheForCurrentSong;
+    private long _currentCacheSessionId;
+    private CancellationTokenSource? _cachingCts;
+    private string? _lastResolvedPlayUrl;
+
     private Task PlaySongAsync(Song song) => PlaySongAsync(song, 0);
 
     private async Task PlaySongAsync(Song song, double startPosition = 0)
@@ -41,6 +47,18 @@ public sealed partial class MainWindow
         var currentCts = _playbackCts;
         var currentSession = Interlocked.Increment(ref _playbackSessionId);
         var ct = currentCts.Token;
+
+        // 重置 30 秒收听缓存状态与任务
+        var cacheSession = Interlocked.Increment(ref _currentCacheSessionId);
+        try
+        {
+            _cachingCts?.Cancel();
+            _cachingCts?.Dispose();
+        }
+        catch {}
+        _cachingCts = new CancellationTokenSource();
+        _hasTriggeredCacheForCurrentSong = false;
+        _lastResolvedPlayUrl = null;
 
         bool IsStale() => ct.IsCancellationRequested || Interlocked.Read(ref _playbackSessionId) != currentSession;
 
@@ -122,23 +140,24 @@ public sealed partial class MainWindow
             var server = WebDavService.GetActiveServer();
             if (server != null && !string.IsNullOrEmpty(song.WebDavHref))
             {
-                Application.Invoke(() =>
+                var localCache = WebDavService.GetLocalCachePath(server, song.WebDavHref);
+                // 1. 若本地完整缓存已存在且有效，直接秒开本地文件
+                if (File.Exists(localCache) && new FileInfo(localCache).Length > 4096)
                 {
-                    if (IsStale()) return;
-                    _controlBar.UpdateStatus($"[WebDAV] 正在连接/缓冲音频: {song.Title} ...");
-                });
-                playUrl = await WebDavService.GetOrDownloadAudioAsync(server, song.WebDavHref, prog =>
-                {
-                    if (IsStale()) return;
-                    Application.Invoke(() => _controlBar.UpdateStatus(prog));
-                }, ct);
-
-                if (IsStale()) return;
-
-                if (!string.IsNullOrEmpty(playUrl) && File.Exists(playUrl))
-                {
-                    // 通过 ATL.NET 从落盘音频中提取真实内嵌元数据（歌名、歌手、专辑、真实总时长、音质规格）
+                    playUrl = localCache;
                     song = WebDavService.EnrichSongMetadata(server, song, playUrl);
+                    _hasTriggeredCacheForCurrentSong = true; // 已有本地完整缓存，无需延时缓存
+                }
+                else
+                {
+                    // 2. 本地尚未缓存：直接使用带凭据的流式直链 URL 秒级起播，无需等待几十兆音频下载完毕
+                    Application.Invoke(() =>
+                    {
+                        if (IsStale()) return;
+                        _controlBar.UpdateStatus($"[WebDAV] 正在直连音频流: {song.Title} ...");
+                    });
+                    playUrl = WebDavService.BuildStreamingUriWithAuth(server, song.WebDavHref);
+                    AppLogger.Info("MainWindow.Playback", $"Streaming WebDAV audio: {song.Title} via {playUrl}");
                 }
             }
             else
@@ -245,11 +264,8 @@ public sealed partial class MainWindow
                 lyrics = await QqMusicApi.GetLyricsAsync(song.Mid);
                 if (IsStale()) return;
 
-                // 启动异步流式边播边存
-                if (!string.IsNullOrEmpty(playUrl))
-                {
-                    _ = AudioCacheService.CacheAudioAsync(song.Mid, _actualQualityTier, playUrl);
-                }
+                _lastResolvedPlayUrl = playUrl;
+                // 优化：不再在起播时立即全量写盘，延后至连续收听满 30 秒后再触发后台缓存，前奏切歌不消耗任何全量带宽
             }
         }
 
@@ -474,7 +490,29 @@ public sealed partial class MainWindow
 
     private void UpdateProgress(double currentSec)
     {
-        if (_activeSong == null || _activeSong.Duration <= 0) return;
+        if (_activeSong == null) return;
+
+        // 若曲目总时长原本未知（如未缓存的 WebDAV 流媒体），当底层 GStreamer 探测到真实流时长后动态回填
+        if (_activeSong.Duration <= 0 && _player.TotalDurationSeconds > 0)
+        {
+            _activeSong.Duration = (int)Math.Round(_player.TotalDurationSeconds);
+            if (_standaloneWebServer != null)
+            {
+                _standaloneWebServer.TotalDurationSeconds = _activeSong.Duration;
+            }
+            _mprisService.UpdateSong(_activeSong);
+        }
+
+        // 收听满 30 秒门限检测：若收听超过 30 秒（或超短音频收听超 80%），自动触发后台完整持久化缓存
+        if (!_hasTriggeredCacheForCurrentSong && !_activeSong.IsLocal)
+        {
+            bool reachThreshold = currentSec >= 30.0 || (_activeSong.Duration > 0 && _activeSong.Duration < 30.0 && currentSec >= _activeSong.Duration * 0.8);
+            if (reachThreshold)
+            {
+                _hasTriggeredCacheForCurrentSong = true;
+                TriggerBackgroundCacheForSong(_activeSong, _currentCacheSessionId, _cachingCts?.Token ?? CancellationToken.None);
+            }
+        }
 
         // AOD 后台息屏模式：仅在后台同步 D-Bus 位置与防抖持久化，不触发前台界面控件重绘
         if (_isAodMode)
@@ -491,8 +529,8 @@ public sealed partial class MainWindow
         }
 
         var cur = TimeSpan.FromSeconds(currentSec);
-        var total = TimeSpan.FromSeconds(_activeSong.Duration);
-        var progressPercent = Math.Clamp(currentSec / _activeSong.Duration, 0, 1);
+        var total = TimeSpan.FromSeconds(Math.Max(0, _activeSong.Duration));
+        var progressPercent = _activeSong.Duration > 0 ? Math.Clamp(currentSec / _activeSong.Duration, 0, 1) : 0;
 
         _controlBar.UpdateProgress(cur, total, progressPercent);
         _mprisService.UpdatePosition(currentSec);
@@ -504,6 +542,60 @@ public sealed partial class MainWindow
             _lastProgressSaveTick = Environment.TickCount64;
             UserSession.Current.Save();
         }
+    }
+
+    /// <summary>
+    /// 收听满 30 秒后异步启动后台持久化落盘缓存
+    /// </summary>
+    private void TriggerBackgroundCacheForSong(Song song, long session, CancellationToken ct)
+    {
+        if (song.IsLocal) return;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (ct.IsCancellationRequested || session != Interlocked.Read(ref _currentCacheSessionId)) return;
+
+                if (song.IsWebDav && !string.IsNullOrEmpty(song.WebDavHref))
+                {
+                    var server = WebDavService.GetActiveServer();
+                    if (server != null)
+                    {
+                        var localCache = WebDavService.GetLocalCachePath(server, song.WebDavHref);
+                        if (!File.Exists(localCache) || new FileInfo(localCache).Length <= 4096)
+                        {
+                            AppLogger.Info("MainWindow.Playback", $"[30s收听达成] 启动后台持久化缓存 WebDAV 曲目: {song.Title}");
+                            var downloadedPath = await WebDavService.GetOrDownloadAudioAsync(server, song.WebDavHref, null, ct).ConfigureAwait(false);
+                            if (!string.IsNullOrEmpty(downloadedPath) && File.Exists(downloadedPath))
+                            {
+                                WebDavService.EnrichSongMetadata(server, song, downloadedPath);
+                            }
+                        }
+                    }
+                }
+                else if (!string.IsNullOrEmpty(song.Mid))
+                {
+                    var cachedPath = AudioCacheService.GetCachedAudioPath(song.Mid, _actualQualityTier);
+                    if (string.IsNullOrEmpty(cachedPath) || !File.Exists(cachedPath))
+                    {
+                        if (!string.IsNullOrEmpty(_lastResolvedPlayUrl) && _lastResolvedPlayUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                        {
+                            AppLogger.Info("MainWindow.Playback", $"[30s收听达成] 启动后台持久化缓存在线曲目: {song.Title} ({_actualQualityTier})");
+                            await AudioCacheService.CacheAudioAsync(song.Mid, _actualQualityTier, _lastResolvedPlayUrl, ct).ConfigureAwait(false);
+                        }
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // 切歌取消正常
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("MainWindow.Playback", $"Background caching task failed for {song.Title}: {ex.Message}");
+            }
+        }, ct);
     }
 
 

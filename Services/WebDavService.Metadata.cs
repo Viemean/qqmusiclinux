@@ -209,6 +209,24 @@ public static partial class WebDavService
         return new Uri(serverUri, relEscaped);
     }
 
+    /// <summary>
+    /// 构建包含 BasicAuth 用户名密码凭据的流式直链 URI（供 GStreamer playbin 直接流式秒播）
+    /// </summary>
+    public static string BuildStreamingUriWithAuth(WebDavServer server, string relativeHref)
+    {
+        var fullUri = BuildFullUri(server, relativeHref);
+        if (!string.IsNullOrWhiteSpace(server.Username))
+        {
+            var builder = new UriBuilder(fullUri)
+            {
+                UserName = Uri.EscapeDataString(server.Username),
+                Password = Uri.EscapeDataString(server.Password ?? string.Empty)
+            };
+            return builder.Uri.AbsoluteUri;
+        }
+        return fullUri.AbsoluteUri;
+    }
+
     private static string ComputeMd5(string input)
     {
         var bytes = MD5.HashData(Encoding.UTF8.GetBytes(input));
