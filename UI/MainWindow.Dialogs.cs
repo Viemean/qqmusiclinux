@@ -196,9 +196,15 @@ public sealed partial class MainWindow
             using var resp = await client.GetAsync(playUrl, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
             if (resp.IsSuccessStatusCode)
             {
-                await using var fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None);
-                await resp.Content.CopyToAsync(fs);
-                Application.Invoke(() => _controlBar.UpdateStatus($"[下载完成] 已保存至: {fileName} (音乐/qqmusic)"));
+                await using (var fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    await resp.Content.CopyToAsync(fs);
+                }
+
+                Application.Invoke(() => _controlBar.UpdateStatus($"[正在注入] 正在为《{song.Title}》写入封面与歌词..."));
+                await AudioExportService.InjectMetadataAndAssetsAsync(targetPath, song).ConfigureAwait(false);
+
+                Application.Invoke(() => _controlBar.UpdateStatus($"[下载完成] 已保存至: {fileName} (含内嵌封面与歌词)"));
             }
             else
             {

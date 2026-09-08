@@ -214,10 +214,12 @@ public static class AudioExportService
     /// <summary>
     /// 借助 ATL.NET 将标签元数据、内嵌高清封面及歌词写入目标文件
     /// </summary>
-    private static async Task InjectMetadataAndAssetsAsync(string destPath, Song song, CancellationToken ct)
+    public static async Task InjectMetadataAndAssetsAsync(string destPath, Song song, CancellationToken ct = default)
     {
         try
         {
+            if (!File.Exists(destPath)) return;
+
             var track = new ATL.Track(destPath);
 
             // 1. 基础 Tag 信息
@@ -255,6 +257,9 @@ public static class AudioExportService
                     {
                         UnsynchronizedLyrics = lrcText
                     });
+                    // 同时兼容 Vorbis Comment (FLAC/OGG) 常用歌词字段
+                    track.AdditionalFields["LYRICS"] = lrcText;
+                    track.AdditionalFields["UNSYNCEDLYRICS"] = lrcText;
                 }
             }
             catch (Exception ex)
@@ -264,6 +269,7 @@ public static class AudioExportService
 
             // 4. 原子化持久化保存回写
             track.Save();
+            AppLogger.Info("AudioExportService", $"Successfully injected metadata, cover and lyrics into {destPath}");
         }
         catch (Exception ex)
         {
@@ -289,7 +295,11 @@ public static class AudioExportService
         {
             if (string.IsNullOrWhiteSpace(line.Text) || line.Text == "暂无歌词") continue;
 
-            string timeTag = $"[{line.Timestamp:mm\\:ss\\.ff}]";
+            int totalMinutes = (int)line.Timestamp.TotalMinutes;
+            int seconds = line.Timestamp.Seconds;
+            int centiseconds = line.Timestamp.Milliseconds / 10;
+            string timeTag = $"[{totalMinutes:D2}:{seconds:D2}.{centiseconds:D2}]";
+
             sb.AppendLine($"{timeTag}{line.Text}");
             if (!string.IsNullOrWhiteSpace(line.Trans))
             {
