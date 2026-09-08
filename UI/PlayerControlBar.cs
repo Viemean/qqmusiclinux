@@ -322,8 +322,9 @@ public sealed class PlayerControlBar : FrameView
 
         _nextBtn = new Button
         {
-            Text = "下一首",
-            X = Pos.AnchorEnd(10),
+            Text = "[L] 下一首",
+            NoDecorations = true,
+            X = Pos.AnchorEnd(12),
             Y = 1,
             CanFocus = false,
             ShadowStyle = ShadowStyles.None
@@ -341,7 +342,7 @@ public sealed class PlayerControlBar : FrameView
         _playPauseBtn = new Button
         {
             Text = "播放",
-            X = Pos.AnchorEnd(19),
+            X = Pos.AnchorEnd(22),
             Y = 1,
             CanFocus = false,
             ShadowStyle = ShadowStyles.None
@@ -358,8 +359,9 @@ public sealed class PlayerControlBar : FrameView
 
         _prevBtn = new Button
         {
-            Text = "上一首",
-            X = Pos.AnchorEnd(29),
+            Text = "[J] 上一首",
+            NoDecorations = true,
+            X = Pos.AnchorEnd(34),
             Y = 1,
             CanFocus = false,
             ShadowStyle = ShadowStyles.None
@@ -374,11 +376,12 @@ public sealed class PlayerControlBar : FrameView
         };
         Add(_prevBtn);
 
-        // 播放循环模式按钮 (快捷键 M) - 放在下一行 [上一首] 按钮左侧
+        // 播放循环模式按钮 (快捷键 O) - 放在 [上一首] 按钮左侧
         _modeBtn = new Button
         {
-            Text = "随机",
-            X = Pos.AnchorEnd(39),
+            Text = "[O] 随机",
+            NoDecorations = true,
+            X = Pos.AnchorEnd(44),
             Y = 1,
             CanFocus = false,
             ShadowStyle = ShadowStyles.None
@@ -393,11 +396,11 @@ public sealed class PlayerControlBar : FrameView
         };
         Add(_modeBtn);
 
-        // 分享按钮 - 放在 [随机] 按钮左侧 (X = AnchorEnd(48))
+        // 分享按钮 - 放在 [播放模式] 按钮左侧
         _shareBtn = new Button
         {
             Text = "分享",
-            X = Pos.AnchorEnd(48),
+            X = Pos.AnchorEnd(54),
             Y = 1,
             CanFocus = false,
             ShadowStyle = ShadowStyles.None
@@ -661,7 +664,7 @@ public sealed class PlayerControlBar : FrameView
 
     public void UpdatePlaybackMode(PlaybackMode mode)
     {
-        _modeBtn.Text = mode.GetBadge();
+        _modeBtn.Text = $"[O] {mode.GetBadge()}";
         SetNeedsLayout();
     }
 

@@ -30,6 +30,7 @@ public static partial class Program
             Console.WriteLine("  --web                Run standalone Web player server");
             Console.WriteLine("  -p, --web-port <p>   Specify Web player port (default: 9999)");
             Console.WriteLine("  --no-audio           Disable local GStreamer playback");
+            Console.WriteLine("  --no-notify          Disable desktop song switch notifications");
             return;
         }
 
@@ -51,6 +52,19 @@ public static partial class Program
                        Environment.GetEnvironmentVariable("QQMUSIC_DEBUG") == "1";
         QQMusic.Tui.Utils.AppLogger.Init(isDebug);
         QQMusic.Tui.Utils.AppLogger.Info("Program", $"Starting QQ Music TUI. DebugMode: {isDebug}");
+
+        // 加载用户全局偏好配置，并处理命令行参数覆盖
+        QQMusic.Tui.Models.UserConfig.Load();
+        if (args.Contains("--no-notify"))
+        {
+            QQMusic.Tui.Models.UserConfig.Current.EnableSongSwitchNotification = false;
+            QQMusic.Tui.Utils.AppLogger.Info("Program", "Song switch notifications disabled by --no-notify CLI flag.");
+        }
+
+        if (OperatingSystem.IsLinux() && QQMusic.Tui.Models.UserConfig.Current.EnableSongSwitchNotification)
+        {
+            QQMusic.Tui.Services.DesktopNotificationService.Instance.Initialize();
+        }
 
         AppDomain.CurrentDomain.UnhandledException += (s, e) =>
         {

@@ -272,8 +272,21 @@ public sealed class NowPlayingView : View
             e.RowAttribute = new Attribute(MikuTheme.QqTextLyricDim, Color.None);
         };
 
+        bool isInBottomRightButtonArea = false;
         _lyricListView.MouseEvent += (s, m) =>
         {
+            int containerW = _lyricContainer.Viewport.Width;
+            int containerH = _lyricContainer.Viewport.Height;
+            if (containerW > 0 && containerH > 0 && m.Position is { } pos && pos.X >= containerW - 18 && pos.Y >= containerH - 3)
+            {
+                isInBottomRightButtonArea = true;
+                m.Handled = true;
+                return;
+            }
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
+            {
+                isInBottomRightButtonArea = false;
+            }
             if (m.Flags.HasFlag(MouseFlags.WheeledUp) || m.Flags.HasFlag(MouseFlags.WheeledDown) ||
                 m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
             {
@@ -285,6 +298,11 @@ public sealed class NowPlayingView : View
 
         _lyricListView.Accepting += (s, e) =>
         {
+            if (isInBottomRightButtonArea)
+            {
+                e.Handled = true;
+                return;
+            }
             int selectedIdx = _lyricListView.SelectedItem ?? -1;
             if (selectedIdx >= 0 && selectedIdx < _lyricItemToLineIndex.Count)
             {

@@ -312,23 +312,26 @@ public sealed partial class MainWindow
             _mprisService.UpdateVolume(_player.Volume);
             _mprisService.UpdatePlaybackMode(_currentPlaybackMode);
 
-            if (TerminalImageHelper.IsImageSupported)
+            // 异步后台拉取/提取封面，就绪后立即向系统 MPRIS 发送 mpris:artUrl 并弹出桌面切歌通知
+            _ = Task.Run(async () =>
             {
-                // 异步后台拉取/提取封面，就绪后立即向系统 MPRIS 发送 mpris:artUrl (file://)
-                _ = Task.Run(async () =>
+                if (IsStale()) return;
+                string? cover = null;
+                try
                 {
-                    if (IsStale()) return;
-                    try
+                    cover = await TerminalImageHelper.EnsureSongCoverAsync(song).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(cover) && !IsStale())
                     {
-                        var cover = await TerminalImageHelper.EnsureSongCoverAsync(song);
-                        if (!string.IsNullOrEmpty(cover) && !IsStale())
-                        {
-                            _mprisService.UpdateCover(cover);
-                        }
+                        _mprisService.UpdateCover(cover);
                     }
-                    catch {}
-                });
-            }
+                }
+                catch {}
+
+                if (!IsStale())
+                {
+                    DesktopNotificationService.Instance.NotifySongSwitch(song, _actualQualityTier, cover);
+                }
+            });
 
             // 若为本地歌曲或 WebDAV 歌曲，且无歌词或缺少翻译歌词（仅在外文歌曲确实需要翻译时），后台自动尝试匹配在线歌词与双语翻译
             bool isLocalOrWebDav = song.IsLocal || song.IsWebDav;

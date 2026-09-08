@@ -200,6 +200,7 @@ public sealed partial class MainWindow : Window
         _userStatusBtn = new Button
         {
             Text = GetUserStatusText(),
+            NoDecorations = true,
             Y = 0,
             ShadowStyle = ShadowStyles.None,
             CanFocus = false
@@ -212,7 +213,8 @@ public sealed partial class MainWindow : Window
         // 顶部听歌识曲按钮：位于账号按钮左侧
         _recognizeBtn = new Button
         {
-            Text = "识曲",
+            Text = "[R] 识曲",
+            NoDecorations = true,
             Y = 0,
             ShadowStyle = ShadowStyles.None,
             CanFocus = false
@@ -222,10 +224,11 @@ public sealed partial class MainWindow : Window
         _recognizeBtn.Accepting += (s, e) => ShowAudioRecognitionDialog();
         Add(_recognizeBtn);
 
-        // 顶部 Web 协同按钮：独立位于账号按钮右侧，严格不绑定快捷键防止误触，仅支持鼠标点击
+        // 顶部 Web 协同按钮：独立位于账号按钮右侧
         _webBtn = new Button
         {
-            Text = "Web",
+            Text = "[W] Web",
+            NoDecorations = true,
             Y = 0,
             ShadowStyle = ShadowStyles.None,
             CanFocus = false
@@ -422,11 +425,11 @@ public sealed partial class MainWindow : Window
         };
         Add(_songListView);
 
-        // 3.5. 主列表即时查找悬浮窗 (G 键触发)
+        // 3.5. 主列表即时查找悬浮窗 (G 键触发) - 置于中央歌曲列表视窗内靠上居中，彻底消除与右侧分割线重叠
         _quickSearchBar = new QuickSearchFloatingBar
         {
             X = Pos.Center(),
-            Y = 3
+            Y = 1
         };
         _quickSearchBar.SearchProvider = kw => _songListView.PerformInListSearch(kw);
         _quickSearchBar.RowSelected += rowIdx => _songListView.ScrollToAndSelectItem(rowIdx);
@@ -434,7 +437,7 @@ public sealed partial class MainWindow : Window
         {
             _songListView.SetFocusToList();
         };
-        Add(_quickSearchBar);
+        _songListView.Add(_quickSearchBar);
 
         _sidebarList.Accepted += async (s, e) =>
         {
@@ -573,8 +576,21 @@ public sealed partial class MainWindow : Window
             // 未播放行与空行样式
             e.RowAttribute = new Terminal.Gui.Drawing.Attribute(MikuTheme.QqTextLyricDim, Color.None);
         };
+        bool isLyricMouseInButtonArea = false;
         _lyricListView.MouseEvent += (s, m) =>
         {
+            int frameW = _lyricFrame.Viewport.Width;
+            int frameH = _lyricFrame.Viewport.Height;
+            if (frameW > 0 && frameH > 0 && m.Position is { } pos && pos.X >= frameW - 18 && pos.Y >= frameH - 3)
+            {
+                isLyricMouseInButtonArea = true;
+                m.Handled = true;
+                return;
+            }
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
+            {
+                isLyricMouseInButtonArea = false;
+            }
             if (m.Flags.HasFlag(MouseFlags.WheeledUp) || m.Flags.HasFlag(MouseFlags.WheeledDown) ||
                 m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
             {
@@ -584,6 +600,18 @@ public sealed partial class MainWindow : Window
         };
         _lyricFrame.MouseEvent += (s, m) =>
         {
+            int frameW = _lyricFrame.Viewport.Width;
+            int frameH = _lyricFrame.Viewport.Height;
+            if (frameW > 0 && frameH > 0 && m.Position is { } pos && pos.X >= frameW - 18 && pos.Y >= frameH - 3)
+            {
+                isLyricMouseInButtonArea = true;
+                m.Handled = true;
+                return;
+            }
+            if (m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
+            {
+                isLyricMouseInButtonArea = false;
+            }
             if (m.Flags.HasFlag(MouseFlags.WheeledUp) || m.Flags.HasFlag(MouseFlags.WheeledDown) ||
                 m.Flags.HasFlag(MouseFlags.LeftButtonClicked) || m.Flags.HasFlag(MouseFlags.LeftButtonPressed))
             {
@@ -612,6 +640,7 @@ public sealed partial class MainWindow : Window
         };
         _lyricListView.Accepted += async (s, e) =>
         {
+            if (isLyricMouseInButtonArea) return;
             _lastUserLyricScrollTick = 0;
             var idx = _lyricListView.SelectedItem ?? -1;
             if (idx >= 0 && idx < _lyricItemToLineIndex.Count && _activeSong != null)
@@ -835,7 +864,7 @@ public sealed partial class MainWindow : Window
         // 底部快捷键操作指南（独立放置在控制栏UI方框下方最底行，干净平整无边框干扰）
         _hotkeyHintLabel = new Label
         {
-            Text = " [V]播放界面  [U]登录  [O]播放顺序  [N]插队  [E]队列  [G]过滤  [S]收藏  [/]搜索  [J]上一首  [L]下一首  [M]静音  [R]识曲  [W]Web",
+            Text = " [V]播放界面  [B]通知  [M]静音  [/]搜索  [E]队列  [G]查找  [N]插入",
             X = 0,
             Y = Pos.AnchorEnd(1),
             Width = Dim.Fill(),
@@ -1182,9 +1211,10 @@ public sealed partial class MainWindow : Window
                 Application.Invoke(UpdateFrameBorderHighlights);
             }
 
-            // 6. 只有未在搜索框内打字时，按 F3 或 '/' 才作为激活搜索框的快捷键
+            // 6. 只有未在搜索框内打字时，按 F3 或 '/' 才作为激活搜索框的快捷键（大播放界面下禁止唤出搜索）
             if (k == Key.F3 || k.AsRune.Value == '/')
             {
+                if (_isNowPlayingViewActive) return;
                 k.Handled = true;
                 _searchField.CanFocus = true;
                 _isSearchActive = true;
@@ -1336,6 +1366,7 @@ public sealed partial class MainWindow : Window
 
             if (c == 'R')
             {
+                if (_isNowPlayingViewActive) return;
                 k.Handled = true;
                 ShowAudioRecognitionDialog();
                 return;
@@ -1343,6 +1374,7 @@ public sealed partial class MainWindow : Window
 
             if (c == 'W')
             {
+                if (_isNowPlayingViewActive) return;
                 k.Handled = true;
                 HandleWebButtonClicked();
                 return;
@@ -1353,6 +1385,7 @@ public sealed partial class MainWindow : Window
                        k.ToString().Equals("Key.U", StringComparison.OrdinalIgnoreCase);
             if (isU)
             {
+                if (_isNowPlayingViewActive) return;
                 k.Handled = true;
                 ShowLoginDialog();
                 return;
@@ -1360,6 +1393,7 @@ public sealed partial class MainWindow : Window
 
             if (c == 'N')
             {
+                if (_isNowPlayingViewActive) return;
                 k.Handled = true;
                 if (_currentViewMode != ViewMode.GuessRecommend && _songListView.Songs.Count > 0)
                 {
@@ -1376,6 +1410,7 @@ public sealed partial class MainWindow : Window
 
             if (c == 'E')
             {
+                if (_isNowPlayingViewActive) return;
                 k.Handled = true;
                 ShowQueueDrawerDialog();
                 return;
@@ -1383,8 +1418,16 @@ public sealed partial class MainWindow : Window
 
             if (c == 'G')
             {
+                if (_isNowPlayingViewActive) return;
                 k.Handled = true;
                 ToggleQuickSearch();
+                return;
+            }
+
+            if (c == 'B')
+            {
+                k.Handled = true;
+                ToggleDesktopNotification();
                 return;
             }
 
@@ -1392,6 +1435,13 @@ public sealed partial class MainWindow : Window
             {
                 k.Handled = true;
                 await MatchOrRestoreLyricAsync();
+                return;
+            }
+
+            if (c == 'X')
+            {
+                k.Handled = true;
+                await HandleExportSongAsync();
                 return;
             }
 
@@ -1560,9 +1610,9 @@ public sealed partial class MainWindow : Window
         if (UserSession.Current.IsLoggedIn)
         {
             var name = string.IsNullOrEmpty(UserSession.Current.Nick) ? UserSession.Current.Uin : UserSession.Current.Nick;
-            return $"账号: {name}";
+            return $"[U] 账号: {name}";
         }
-        return "未登录 (按 U 登录)";
+        return "[U] 登录";
     }
 
     /// <summary>
@@ -1581,31 +1631,31 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// 动态刷新顶部右上角按钮（识曲、账号状态与 Web 协同按钮）的防重叠独立布局
-    /// 自右向左依次排列：[ Web ] -> [ 账号 ] -> [ 识曲 ]
+    /// 自右向左依次排列：[W] Web -> [U] 账号 -> [R] 识曲
     /// </summary>
     internal void UpdateTopRightButtonsLayout()
     {
         if (_userStatusBtn == null || _recognizeBtn == null || _webBtn == null || _searchField == null) return;
 
-        // 1. 最右侧：Web 协同按钮 [ Web ] (右侧保留 1 列安全留白)
+        // 1. 最右侧：Web 协同按钮 [W] Web (右侧保留 1 列安全留白)
         var isWebRunning = (_standaloneWebServer?.IsRunning == true) || (_player is WebPlayer);
-        var webText = isWebRunning ? "Web:开" : "Web";
+        var webText = isWebRunning ? "[W] Web:开" : "[W] Web";
         _webBtn.Text = webText;
-        int webBtnWidth = GetVisualWidth(webText) + 4;
+        int webBtnWidth = GetVisualWidth(webText);
         int webAnchorOffset = webBtnWidth + 1;
         _webBtn.X = Pos.AnchorEnd(webAnchorOffset);
 
-        // 2. 账号按钮 [ 账号: ... ] (排在 Web 按钮左侧，间隔 2 列)
+        // 2. 账号按钮 [U] 登录 / [U] 账号: ... (排在 Web 按钮左侧，间隔 2 列)
         var statusText = GetUserStatusText();
         _userStatusBtn.Text = statusText;
-        int userBtnWidth = GetVisualWidth(statusText) + 4;
+        int userBtnWidth = GetVisualWidth(statusText);
         int userAnchorOffset = webAnchorOffset + 2 + userBtnWidth;
         _userStatusBtn.X = Pos.AnchorEnd(userAnchorOffset);
 
-        // 3. 识曲按钮 [ 识曲 ] (排在账号按钮左侧，间隔 2 列)
-        const string recText = "识曲";
+        // 3. 识曲按钮 [R] 识曲 (排在账号按钮左侧，间隔 2 列)
+        const string recText = "[R] 识曲";
         _recognizeBtn.Text = recText;
-        int recBtnWidth = GetVisualWidth(recText) + 4;
+        int recBtnWidth = GetVisualWidth(recText);
         int recAnchorOffset = userAnchorOffset + 2 + recBtnWidth;
         _recognizeBtn.X = Pos.AnchorEnd(recAnchorOffset);
 
@@ -2519,7 +2569,7 @@ public sealed partial class MainWindow : Window
         _userStatusBtn.Visible = false;
         _recognizeBtn.Visible = false;
         _webBtn.Visible = false;
-        _hotkeyHintLabel.Visible = false;
+        _hotkeyHintLabel.Visible = !_isImmersiveMode;
 
         _nowPlayingView.SetSong(_activeSong, AudioQualityHelper.GetBadge(_actualQualityTier));
         _nowPlayingView.SetLyrics(_currentLyrics, _showTranslation);
@@ -2692,5 +2742,52 @@ public sealed partial class MainWindow : Window
         {
             _quickSearchBar.ShowAndFocus();
         }
+    }
+
+    private void ToggleDesktopNotification()
+    {
+        UserConfig.Current.EnableSongSwitchNotification = !UserConfig.Current.EnableSongSwitchNotification;
+        UserConfig.Current.Save();
+        string stateStr = UserConfig.Current.EnableSongSwitchNotification ? "已开启" : "已关闭";
+        _controlBar.UpdateStatus($"[桌面通知] 切歌气泡已{stateStr} (按 B 切换)");
+        AppLogger.Info("MainWindow", $"Desktop song switch notification toggled: {stateStr}");
+    }
+
+    private async Task HandleExportSongAsync()
+    {
+        Song? targetSong = null;
+        if (_songListView.Songs.Count > 0 && _songListView.SelectedItem is { } idx && idx >= 0 && idx < _songListView.Songs.Count)
+        {
+            targetSong = _songListView.Songs[idx];
+        }
+        else
+        {
+            targetSong = _activeSong ?? _controlBar.CurrentSong;
+        }
+
+        if (targetSong == null)
+        {
+            _controlBar.UpdateStatus("[导出] 请先在列表中选中歌曲或起播一首歌曲");
+            return;
+        }
+
+        _controlBar.UpdateStatus($"[导出中] 正在导出: {targetSong.Title}...");
+        var quality = _actualQualityTier;
+
+        _ = Task.Run(async () =>
+        {
+            var res = await AudioExportService.ExportSongAsync(targetSong, quality).ConfigureAwait(false);
+            Application.Invoke(() =>
+            {
+                if (res.Success)
+                {
+                    _controlBar.UpdateStatus($"[导出成功] 已保存至: {Path.GetFileName(res.FilePath)} (按 X 再次导出)");
+                }
+                else
+                {
+                    _controlBar.UpdateStatus($"[导出失败] {res.Message}");
+                }
+            });
+        });
     }
 }
