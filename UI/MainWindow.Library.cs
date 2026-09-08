@@ -526,57 +526,73 @@ public sealed partial class MainWindow
         }
     }
 
+    private bool _isScanningLocalMusic = false;
+
     private async Task RescanLocalMusicAsync()
     {
-        _currentViewMode = ViewMode.LocalMusic;
-        var folders = QQMusic.Tui.Services.LocalMusicService.GetFolders();
-        if (folders.Count == 0)
+        if (_isScanningLocalMusic)
         {
-            Application.Invoke(() =>
-            {
-                _songListView.SetMessage("本地音乐库为空 (请按 A 键添加本地音乐文件夹进行扫描，按 F 管理目录)", "本地音乐: 0 首");
-                _controlBar.UpdateStatus("[本地音乐] 未配置扫描目录，请按 A 键添加本地音乐目录");
-            });
+            _controlBar.UpdateStatus("[本地音乐] 正在扫描中，请稍候...");
             return;
         }
 
-        Application.Invoke(() =>
+        _isScanningLocalMusic = true;
+        try
         {
-            _songListView.SetMessage("正在扫描本地音乐目录 (递归检索音频文件并跳过隐藏项)...", "本地音乐 (扫描中)");
-            _controlBar.UpdateStatus("[正在扫描] 正在深度检索本地音频文件元数据...");
-        });
-
-        var songs = await QQMusic.Tui.Services.LocalMusicService.ScanAllFoldersAsync(progress =>
-        {
-            Application.Invoke(() =>
+            _currentViewMode = ViewMode.LocalMusic;
+            var folders = QQMusic.Tui.Services.LocalMusicService.GetFolders();
+            if (folders.Count == 0)
             {
-                _controlBar.UpdateStatus($"[正在扫描] {progress}");
-            });
-        });
-
-        Application.Invoke(() =>
-        {
-            if (songs.Count == 0)
-            {
-                _songListView.SetMessage("已配置的目录中未发现音频文件 (按 A 键添加其它文件夹，按 F 管理目录)", "本地音乐: 0 首");
-                _controlBar.UpdateStatus("[扫描完成] 未发现有效音频文件，请确认目录中包含 .flac/.mp3/.m4a 等文件");
+                Application.Invoke(() =>
+                {
+                    _songListView.SetMessage("本地音乐库为空 (请按 A 键添加本地音乐文件夹进行扫描，按 F 管理目录)", "本地音乐: 0 首");
+                    _controlBar.UpdateStatus("[本地音乐] 未配置扫描目录，请按 A 键添加本地音乐目录");
+                });
                 return;
             }
 
-            var title = $"本地音乐: 共 {songs.Count} 首 (按 A 添加目录，按 R 重新扫描，按 F 管理目录)";
-            _songListView.SetSongs(songs, title);
-            if (_activeSong != null)
+            Application.Invoke(() =>
             {
-                _songListView.SetPlayingSong(_activeSong.Mid);
-            }
-            _songListView.SetFocusToList();
-            _controlBar.UpdateStatus($"[扫描完成] 已发现并载入 {songs.Count} 首本地音乐 (共 {folders.Count} 个扫描目录)");
-        });
+                _songListView.SetMessage("正在扫描本地音乐目录 (递归检索音频文件并跳过隐藏项)...", "本地音乐 (扫描中)");
+                _controlBar.UpdateStatus("[正在扫描] 正在深度检索本地音频文件元数据...");
+            });
+
+            var songs = await QQMusic.Tui.Services.LocalMusicService.ScanAllFoldersAsync(progress =>
+            {
+                Application.Invoke(() =>
+                {
+                    _controlBar.UpdateStatus($"[正在扫描] {progress}");
+                });
+            });
+
+            Application.Invoke(() =>
+            {
+                if (songs.Count == 0)
+                {
+                    _songListView.SetMessage("已配置的目录中未发现音频文件 (按 A 键添加其它文件夹，按 F 管理目录)", "本地音乐: 0 首");
+                    _controlBar.UpdateStatus("[扫描完成] 未发现有效音频文件，请确认目录中包含 .flac/.mp3/.m4a 等文件");
+                    return;
+                }
+
+                var title = $"本地音乐: 共 {songs.Count} 首 (按 A 添加目录，按 R 重新扫描，按 F 管理目录)";
+                _songListView.SetSongs(songs, title);
+                if (_activeSong != null)
+                {
+                    _songListView.SetPlayingSong(_activeSong.Mid);
+                }
+                _songListView.SetFocusToList();
+                _controlBar.UpdateStatus($"[扫描完成] 已发现并载入 {songs.Count} 首本地音乐 (共 {folders.Count} 个扫描目录)");
+            });
+        }
+        finally
+        {
+            _isScanningLocalMusic = false;
+        }
     }
 
     private void ShowAddFolderDialog()
     {
-        var dlg = new AddFolderDialog(async folder =>
+        using var dlg = new AddFolderDialog(async folder =>
         {
             var added = QQMusic.Tui.Services.LocalMusicService.AddFolder(folder);
             if (added)
@@ -594,7 +610,7 @@ public sealed partial class MainWindow
 
     private void ShowFolderManageDialog()
     {
-        var dlg = new FolderManageDialog(
+        using var dlg = new FolderManageDialog(
             onFoldersChanged: () =>
             {
                 var cached = QQMusic.Tui.Services.LocalMusicService.GetCachedSongs();

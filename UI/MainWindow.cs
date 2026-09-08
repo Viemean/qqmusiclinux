@@ -1056,6 +1056,28 @@ public sealed partial class MainWindow : Window
                 }
             }
 
+            if (_currentViewMode == ViewMode.LocalMusic && !_isSearchActive)
+            {
+                if (c == 'A')
+                {
+                    k.Handled = true;
+                    ShowAddFolderDialog();
+                    return;
+                }
+                if (c == 'R')
+                {
+                    k.Handled = true;
+                    await RescanLocalMusicAsync();
+                    return;
+                }
+                if (c == 'F')
+                {
+                    k.Handled = true;
+                    ShowFolderManageDialog();
+                    return;
+                }
+            }
+
             if (c == 'Q')
             {
                 k.Handled = true;
