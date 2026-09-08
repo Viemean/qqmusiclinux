@@ -11,6 +11,28 @@ public static partial class Program
 {
     public static void Main(string[] args)
     {
+        if (args.Contains("--version") || args.Contains("-v"))
+        {
+            Console.WriteLine("qqmusic-tui 0.1.6");
+            return;
+        }
+
+        if (args.Contains("--help") || args.Contains("-h"))
+        {
+            Console.WriteLine("QQ Music TUI - Linux Terminal QQ Music Player");
+            Console.WriteLine("Usage: qqmusic-tui [options]");
+            Console.WriteLine();
+            Console.WriteLine("Options:");
+            Console.WriteLine("  -v, --version        Show version information and exit");
+            Console.WriteLine("  -h, --help           Show this help message and exit");
+            Console.WriteLine("  -d, --debug          Enable verbose debug logging");
+            Console.WriteLine("  -r, --recognize <f>  Recognize song from audio file");
+            Console.WriteLine("  --web                Run standalone Web player server");
+            Console.WriteLine("  -p, --web-port <p>   Specify Web player port (default: 9999)");
+            Console.WriteLine("  --no-audio           Disable local GStreamer playback");
+            return;
+        }
+
         if (args.Length >= 2 && (args[0] == "--recognize" || args[0] == "-r"))
         {
             var wavPath = args[1];
