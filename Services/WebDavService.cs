@@ -532,4 +532,18 @@ public static partial class WebDavService
         return server.CachedSongs?.Count ?? discovered.Count;
     }
 
+    /// <summary>
+    /// 打开远端 WebDAV 音频流（带 Range 请求头转发与 Basic Auth 凭据，用于服务端透明流式代理）
+    /// </summary>
+    public static async Task<HttpResponseMessage> OpenAudioStreamAsync(WebDavServer server, string relativeHref, string? rangeHeader = null, CancellationToken ct = default)
+    {
+        var client = GetHttpClient(server);
+        var uri = BuildFullUri(server, relativeHref);
+        var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        if (!string.IsNullOrWhiteSpace(rangeHeader))
+        {
+            request.Headers.TryAddWithoutValidation("Range", rangeHeader);
+        }
+        return await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+    }
 }

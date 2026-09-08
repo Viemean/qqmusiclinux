@@ -443,7 +443,27 @@ public sealed partial class WebPlaybackServer : IDisposable
             return;
         }
 
-        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        // WebDAV 歌曲处理：若本地已有完整缓存，直接输出本地文件；否则服务端透明代理转发 WebDAV 流
+        if (CurrentSong?.IsWebDav == true)
+        {
+            var server = WebDavService.GetActiveServer();
+            if (server != null && !string.IsNullOrEmpty(CurrentSong.WebDavHref))
+            {
+                var localCache = WebDavService.GetLocalCachePath(server, CurrentSong.WebDavHref);
+                if (File.Exists(localCache) && new FileInfo(localCache).Length > 4096)
+                {
+                    url = localCache;
+                }
+                else
+                {
+                    await ProxyWebDavStreamAsync(stream, server, CurrentSong.WebDavHref, rangeHeader, ct).ConfigureAwait(false);
+                    return;
+                }
+            }
+        }
+
+        // 携带嵌入凭据的远程地址严禁直接重定向给浏览器
+        if ((url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) && !url.Contains('@'))
         {
             await SendRedirectAsync(stream, url, ct).ConfigureAwait(false);
             return;
@@ -517,6 +537,56 @@ public sealed partial class WebPlaybackServer : IDisposable
         await stream.FlushAsync(ct).ConfigureAwait(false);
     }
 
+    private async Task ProxyWebDavStreamAsync(NetworkStream stream, WebDavServer server, string relativeHref, string? rangeHeader, CancellationToken ct)
+    {
+        try
+        {
+            using var resp = await WebDavService.OpenAudioStreamAsync(server, relativeHref, rangeHeader, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode && resp.StatusCode != HttpStatusCode.PartialContent)
+            {
+                await SendResponseAsync(stream, (int)resp.StatusCode, resp.ReasonPhrase ?? "WebDAV Error", "text/plain", $"WebDAV server returned {resp.StatusCode}", ct).ConfigureAwait(false);
+                return;
+            }
+
+            int statusCode = (int)resp.StatusCode;
+            string statusText = resp.ReasonPhrase ?? (statusCode == 206 ? "Partial Content" : "OK");
+            string contentType = resp.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
+            long? contentLength = resp.Content.Headers.ContentLength;
+            string? contentRange = resp.Content.Headers.ContentRange?.ToString();
+
+            var sb = new StringBuilder();
+            sb.Append($"HTTP/1.1 {statusCode} {statusText}\r\n");
+            sb.Append($"Content-Type: {contentType}\r\n");
+            sb.Append("Accept-Ranges: bytes\r\n");
+            if (!string.IsNullOrEmpty(contentRange))
+            {
+                sb.Append($"Content-Range: {contentRange}\r\n");
+            }
+            if (contentLength.HasValue)
+            {
+                sb.Append($"Content-Length: {contentLength.Value}\r\n");
+            }
+            sb.Append("Access-Control-Allow-Origin: *\r\n");
+            sb.Append("Connection: close\r\n\r\n");
+
+            byte[] headerBytes = Encoding.ASCII.GetBytes(sb.ToString());
+            await stream.WriteAsync(headerBytes.AsMemory(0, headerBytes.Length), ct).ConfigureAwait(false);
+
+            await using var remoteStream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+            byte[] chunk = new byte[64 * 1024];
+            int bytesRead;
+            while ((bytesRead = await remoteStream.ReadAsync(chunk.AsMemory(0, chunk.Length), ct).ConfigureAwait(false)) > 0)
+            {
+                if (ct.IsCancellationRequested) break;
+                await stream.WriteAsync(chunk.AsMemory(0, bytesRead), ct).ConfigureAwait(false);
+            }
+            await stream.FlushAsync(ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLogger.Warn("WebPlaybackServer", $"ProxyWebDavStreamAsync error: {ex.Message}");
+        }
+    }
 
     private static async Task SendResponseAsync(NetworkStream stream, int statusCode, string statusText, string contentType, string content, CancellationToken ct)
     {

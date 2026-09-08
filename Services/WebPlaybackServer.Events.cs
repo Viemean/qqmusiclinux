@@ -201,9 +201,21 @@ public sealed partial class WebPlaybackServer
         string streamUrl = "";
         if (AudioOutputEnabled && !string.IsNullOrEmpty(CurrentPlayUrl))
         {
-            streamUrl = (CurrentPlayUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                         CurrentPlayUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-                         ? CurrentPlayUrl : "/stream/audio";
+            bool isWebDav = CurrentSong?.IsWebDav == true;
+            bool hasCredentials = CurrentPlayUrl.Contains('@') &&
+                                 (CurrentPlayUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                                  CurrentPlayUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+
+            if (isWebDav || hasCredentials)
+            {
+                streamUrl = "/stream/audio";
+            }
+            else
+            {
+                streamUrl = (CurrentPlayUrl.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                             CurrentPlayUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                             ? CurrentPlayUrl : "/stream/audio";
+            }
         }
         sb.Append($"\"streamUrl\":\"{EscapeJson(streamUrl)}\",");
 
