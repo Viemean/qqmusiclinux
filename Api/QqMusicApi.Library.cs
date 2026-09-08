@@ -10,17 +10,34 @@ public sealed partial class QqMusicApi
 {
     public static async Task<List<Song>> SearchAsync(string query, int page = 1, int pageSize = 25, CancellationToken ct = default)
     {
-        var encoded = Uri.EscapeDataString(query);
-        var url = $"https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w={encoded}&n={pageSize}&p={page}&format=json";
+        if (string.IsNullOrWhiteSpace(query)) return [];
 
         try
         {
-            var json = await s_httpClient.GetStringAsync(url, ct).ConfigureAwait(false);
+            var escapedQuery = JsonEncodedText.Encode(query).ToString();
+            var payload = $$"""
+            {
+              "music.search.SearchCgiService": {
+                "module": "music.search.SearchCgiService",
+                "method": "DoSearchForQQMusicDesktop",
+                "param": {
+                  "query": "{{escapedQuery}}",
+                  "page_num": {{page}},
+                  "num_per_page": {{pageSize}},
+                  "search_type": 0
+                }
+              }
+            }
+            """;
+
+            var json = await PostAg1Async(payload, ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            if (root.TryGetProperty("data", out var data) &&
-                data.TryGetProperty("song", out var songObj) &&
+            if (root.TryGetProperty("music.search.SearchCgiService", out var svc) &&
+                svc.TryGetProperty("data", out var data) &&
+                data.TryGetProperty("body", out var body) &&
+                body.TryGetProperty("song", out var songObj) &&
                 songObj.TryGetProperty("list", out var songList) &&
                 songList.ValueKind == JsonValueKind.Array)
             {
@@ -38,8 +55,9 @@ public sealed partial class QqMusicApi
 
             return [];
         }
-        catch
+        catch (Exception ex)
         {
+            AppLogger.Error("Search", $"SearchAsync failed for query '{query}'", ex);
             return [];
         }
     }
