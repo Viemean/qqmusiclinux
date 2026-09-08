@@ -378,50 +378,8 @@ public static class LocalMusicService
 
             entry.HasEmbeddedCover = track.EmbeddedPictures != null && track.EmbeddedPictures.Count > 0;
 
-            if (track.Lyrics != null && track.Lyrics.Count > 0)
-            {
-                foreach (var lyric in track.Lyrics)
-                {
-                    if (!string.IsNullOrWhiteSpace(lyric.UnsynchronizedLyrics))
-                    {
-                        entry.EmbeddedLyrics = lyric.UnsynchronizedLyrics.Trim();
-                        entry.HasEmbeddedLyrics = true;
-                        break;
-                    }
-
-                    if (lyric.SynchronizedLyrics != null && lyric.SynchronizedLyrics.Count > 0)
-                    {
-                        var sb = new StringBuilder();
-                        foreach (var phase in lyric.SynchronizedLyrics)
-                        {
-                            var ts = TimeSpan.FromMilliseconds(phase.TimestampStart);
-                            sb.AppendLine($"[{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds / 10:D2}]{phase.Text}");
-                        }
-                        var s = sb.ToString().Trim();
-                        if (!string.IsNullOrWhiteSpace(s))
-                        {
-                            entry.EmbeddedLyrics = s;
-                            entry.HasEmbeddedLyrics = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // 检查常用内嵌标签字段（FLAC Vorbis Comment / MP3 ID3 / OGG）
-            if (string.IsNullOrEmpty(entry.EmbeddedLyrics) && track.AdditionalFields != null && track.AdditionalFields.Count > 0)
-            {
-                string[] lyricKeys = ["LYRICS", "UNSYNCEDLYRICS", "USLT", "TEXT", "LYRIC", "SUBTITLE", "UNSYNCED LYRICS", "SYNCEDLYRICS"];
-                foreach (var key in lyricKeys)
-                {
-                    if (track.AdditionalFields.TryGetValue(key, out var val) && !string.IsNullOrWhiteSpace(val))
-                    {
-                        entry.EmbeddedLyrics = val.Trim();
-                        entry.HasEmbeddedLyrics = true;
-                        break;
-                    }
-                }
-            }
+            entry.EmbeddedLyrics = ExtractEmbeddedLyrics(track);
+            entry.HasEmbeddedLyrics = !string.IsNullOrWhiteSpace(entry.EmbeddedLyrics);
 
             int bitRateKbps = (int)Math.Round((double)track.Bitrate);
             if (bitRateKbps > 0)
@@ -435,6 +393,52 @@ public static class LocalMusicService
         }
 
         return entry;
+    }
+
+    /// <summary>
+    /// 从 ATL.Track 实例中提取内嵌歌词（优先读取 Lyrics 标签，缺失则回退到 Vorbis Comment / ID3v2 常用字段）
+    /// </summary>
+    public static string? ExtractEmbeddedLyrics(ATL.Track track)
+    {
+        if (track.Lyrics != null && track.Lyrics.Count > 0)
+        {
+            foreach (var lyric in track.Lyrics)
+            {
+                if (!string.IsNullOrWhiteSpace(lyric.UnsynchronizedLyrics))
+                {
+                    return lyric.UnsynchronizedLyrics.Trim();
+                }
+
+                if (lyric.SynchronizedLyrics != null && lyric.SynchronizedLyrics.Count > 0)
+                {
+                    var sb = new StringBuilder();
+                    foreach (var phase in lyric.SynchronizedLyrics)
+                    {
+                        var ts = TimeSpan.FromMilliseconds(phase.TimestampStart);
+                        sb.AppendLine($"[{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds / 10:D2}]{phase.Text}");
+                    }
+                    var s = sb.ToString().Trim();
+                    if (!string.IsNullOrWhiteSpace(s))
+                    {
+                        return s;
+                    }
+                }
+            }
+        }
+
+        if (track.AdditionalFields != null && track.AdditionalFields.Count > 0)
+        {
+            string[] lyricKeys = ["LYRICS", "UNSYNCEDLYRICS", "USLT", "TEXT", "LYRIC", "SUBTITLE", "UNSYNCED LYRICS", "SYNCEDLYRICS"];
+            foreach (var key in lyricKeys)
+            {
+                if (track.AdditionalFields.TryGetValue(key, out var val) && !string.IsNullOrWhiteSpace(val))
+                {
+                    return val.Trim();
+                }
+            }
+        }
+
+        return null;
     }
 
     private static string DetermineQualityFromExtension(string ext)

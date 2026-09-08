@@ -265,6 +265,7 @@ public static partial class WebDavService
                     bool foundTag = !string.IsNullOrWhiteSpace(track.Title) || !string.IsNullOrWhiteSpace(track.Artist);
                     if (foundTag)
                     {
+                        var embeddedLyrics = LocalMusicService.ExtractEmbeddedLyrics(track);
                         lock (s_lock)
                         {
                             if (!string.IsNullOrWhiteSpace(track.Title)) cache.Title = CleanTrackNumberPrefix(track.Title.Trim());
@@ -272,6 +273,20 @@ public static partial class WebDavService
                             if (!string.IsNullOrWhiteSpace(track.Album)) cache.Album = track.Album.Trim();
                             if (track.Duration > 0) cache.Duration = track.Duration;
                             cache.Quality = InferQualityBadge(tmpFile, track);
+                            if (!string.IsNullOrWhiteSpace(embeddedLyrics))
+                            {
+                                cache.EmbeddedLyrics = embeddedLyrics;
+                            }
+                        }
+                        if (!string.IsNullOrWhiteSpace(embeddedLyrics))
+                        {
+                            try
+                            {
+                                var lrcPath = GetLocalLrcCachePath(server, cache.Href);
+                                File.WriteAllText(lrcPath, embeddedLyrics, Encoding.UTF8);
+                                CacheManager.RecordAccess($"webdav/{Path.GetFileName(lrcPath)}", new FileInfo(lrcPath).Length);
+                            }
+                            catch {}
                         }
                         return true;
                     }
@@ -442,6 +457,32 @@ public static partial class WebDavService
                 if (File.Exists(tmpHeaderFile) && new FileInfo(tmpHeaderFile).Length > 0)
                 {
                     var track = new ATL.Track(tmpHeaderFile);
+
+                    // 在拉取头部时顺便提取并缓存内嵌歌词，无需额外网络往返
+                    var embeddedLyrics = LocalMusicService.ExtractEmbeddedLyrics(track);
+                    if (!string.IsNullOrWhiteSpace(embeddedLyrics))
+                    {
+                        try
+                        {
+                            var lrcPath = GetLocalLrcCachePath(server, song.WebDavHref);
+                            if (!File.Exists(lrcPath) || new FileInfo(lrcPath).Length == 0)
+                            {
+                                await File.WriteAllTextAsync(lrcPath, embeddedLyrics, Encoding.UTF8, ct).ConfigureAwait(false);
+                                CacheManager.RecordAccess($"webdav/{Path.GetFileName(lrcPath)}", new FileInfo(lrcPath).Length);
+                            }
+                            // 同步更新内存缓存
+                            lock (s_lock)
+                            {
+                                var cached = server.CachedSongs?.Find(s => string.Equals(s.Href, song.WebDavHref, StringComparison.OrdinalIgnoreCase));
+                                if (cached != null && string.IsNullOrWhiteSpace(cached.EmbeddedLyrics))
+                                {
+                                    cached.EmbeddedLyrics = embeddedLyrics;
+                                }
+                            }
+                        }
+                        catch {}
+                    }
+
                     if (track.EmbeddedPictures != null && track.EmbeddedPictures.Count > 0)
                     {
                         var pic = track.EmbeddedPictures[0];
@@ -616,5 +657,116 @@ public static partial class WebDavService
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// 以级联策略获取 WebDAV 曲目歌词：
+    /// 1. 本地 .lrc 缓存命中
+    /// 2. 本地完整音频缓存命中（通过 LocalMusicService 读取内嵌歌词）
+    /// 3. 内存/磁盘 EmbeddedLyrics 缓存命中
+    /// 4. 远端同名 .lrc 文件探测
+    /// 5. HTTP Range 头部内嵌歌词提取（4MB，与封面提取共用路径）
+    /// </summary>
+    public static async Task<List<LyricLine>> EnsureLyricsAsync(
+        WebDavServer server, Song song, CancellationToken ct = default)
+    {
+        if (server == null || string.IsNullOrEmpty(song.WebDavHref)) return [];
+
+        // 1. 本地完整音频缓存命中，直接走 LocalMusicService 读内嵌歌词
+        var localAudio = GetLocalCachePath(server, song.WebDavHref);
+        if (File.Exists(localAudio) && new FileInfo(localAudio).Length > 4096)
+        {
+            return await LocalMusicService.GetLyricsAsync(song with { LocalFilePath = localAudio }).ConfigureAwait(false);
+        }
+
+        // 2. 本地 .lrc 缓存文件命中
+        var lrcCachePath = GetLocalLrcCachePath(server, song.WebDavHref);
+        if (File.Exists(lrcCachePath) && new FileInfo(lrcCachePath).Length > 0)
+        {
+            try
+            {
+                var lrcText = await File.ReadAllTextAsync(lrcCachePath, Encoding.UTF8, ct).ConfigureAwait(false);
+                var parsed = LyricParser.ParseSingleLrc(lrcText);
+                if (parsed.Count > 0) return parsed;
+            }
+            catch {}
+        }
+
+        // 3. 内存配置缓存中的 EmbeddedLyrics 命中
+        WebDavSongCache? cached;
+        lock (s_lock)
+        {
+            cached = server.CachedSongs?.Find(s => string.Equals(s.Href, song.WebDavHref, StringComparison.OrdinalIgnoreCase));
+        }
+        if (cached != null && !string.IsNullOrWhiteSpace(cached.EmbeddedLyrics))
+        {
+            var parsed = LyricParser.ParseSingleLrc(cached.EmbeddedLyrics);
+            if (parsed.Count > 0) return parsed;
+        }
+
+        // 4. 远端同名 .lrc 文件探测
+        var remoteLrcText = await TryDownloadRemoteLrcAsync(server, song.WebDavHref, ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(remoteLrcText))
+        {
+            var parsed = LyricParser.ParseSingleLrc(remoteLrcText);
+            if (parsed.Count > 0) return parsed;
+        }
+
+        // 5. HTTP Range 头部内嵌歌词提取（复用 EnsureCoverAsync 的同一段头部 Range 逻辑）
+        try
+        {
+            var client = GetHttpClient(server);
+            var uri = BuildFullUri(server, song.WebDavHref);
+            var ext = Path.GetExtension(song.WebDavHref);
+            var tmpHeaderFile = Path.Combine(Path.GetTempPath(), $"webdav_lrc_hdr_{Guid.NewGuid():N}{ext}");
+            try
+            {
+                long rangeEnd = 4 * 1024 * 1024 - 1;
+                byte[]? headerData = await FetchRangeBytesAsync(client, uri, 0, rangeEnd, ct).ConfigureAwait(false);
+                if (headerData != null && headerData.Length > 0)
+                {
+                    // 探测 FLAC 或 ID3v2 真实元数据长度，必要时补充拉取
+                    long requiredHeaderLen = -1;
+                    if (headerData.Length >= 4 && headerData[0] == 0x66 && headerData[1] == 0x4C && headerData[2] == 0x61 && headerData[3] == 0x43)
+                        requiredHeaderLen = GetFlacRequiredHeaderLength(headerData);
+                    else if (headerData.Length >= 10 && headerData[0] == 0x49 && headerData[1] == 0x44 && headerData[2] == 0x33)
+                        requiredHeaderLen = GetId3v2RequiredHeaderLength(headerData);
+
+                    if (requiredHeaderLen > headerData.Length && requiredHeaderLen <= 20 * 1024 * 1024)
+                    {
+                        var fullData = await FetchRangeBytesAsync(client, uri, 0, requiredHeaderLen - 1, ct).ConfigureAwait(false);
+                        if (fullData != null && fullData.Length >= requiredHeaderLen)
+                            headerData = fullData;
+                    }
+
+                    await File.WriteAllBytesAsync(tmpHeaderFile, headerData, ct).ConfigureAwait(false);
+                    var track = new ATL.Track(tmpHeaderFile);
+                    var embeddedLyrics = LocalMusicService.ExtractEmbeddedLyrics(track);
+                    if (!string.IsNullOrWhiteSpace(embeddedLyrics))
+                    {
+                        // 落盘缓存，避免下次重复拉取
+                        await File.WriteAllTextAsync(lrcCachePath, embeddedLyrics, Encoding.UTF8, ct).ConfigureAwait(false);
+                        CacheManager.RecordAccess($"webdav/{Path.GetFileName(lrcCachePath)}", new FileInfo(lrcCachePath).Length);
+                        lock (s_lock)
+                        {
+                            if (cached != null && string.IsNullOrWhiteSpace(cached.EmbeddedLyrics))
+                                cached.EmbeddedLyrics = embeddedLyrics;
+                        }
+                        AppLogger.Info("WebDavService", $"Extracted embedded lyrics from header for: {song.Title}");
+                        return LyricParser.ParseSingleLrc(embeddedLyrics);
+                    }
+                }
+            }
+            finally
+            {
+                try { if (File.Exists(tmpHeaderFile)) File.Delete(tmpHeaderFile); } catch {}
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Debug("WebDavService", $"EnsureLyricsAsync failed for {song.WebDavHref}: {ex.Message}");
+        }
+
+        return [];
     }
 }

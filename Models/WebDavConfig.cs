@@ -14,6 +14,7 @@ public sealed class WebDavSongCache
     public string? LocalCachedPath { get; set; }
     public long FileSize { get; set; }
     public DateTime? LastModified { get; set; }
+    public string? EmbeddedLyrics { get; set; }
 }
 
 public sealed class WebDavItem

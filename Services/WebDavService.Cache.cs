@@ -18,27 +18,34 @@ public static partial class WebDavService
         return Path.Combine(s_cacheDir, filename);
     }
 
-    public static async Task TryDownloadRemoteLrcAsync(WebDavServer server, string audioHref, string localAudioPath)
+    public static string GetLocalLrcCachePath(WebDavServer server, string fileHref)
+    {
+        var filename = $"{server.Id}_{ComputeMd5(fileHref)}.lrc";
+        return Path.Combine(s_cacheDir, filename);
+    }
+
+    public static async Task<string?> TryDownloadRemoteLrcAsync(WebDavServer server, string audioHref, CancellationToken ct = default)
     {
         try
         {
-            var lrcHref = Path.ChangeExtension(audioHref, ".lrc");
-            var localLrcPath = Path.ChangeExtension(localAudioPath, ".lrc");
+            var localLrcPath = GetLocalLrcCachePath(server, audioHref);
             if (File.Exists(localLrcPath) && new FileInfo(localLrcPath).Length > 0)
             {
-                return;
+                return await File.ReadAllTextAsync(localLrcPath, Encoding.UTF8, ct).ConfigureAwait(false);
             }
 
+            var lrcHref = Path.ChangeExtension(audioHref, ".lrc");
             var client = GetHttpClient(server);
             var lrcUri = BuildFullUri(server, lrcHref);
-            using var resp = await client.GetAsync(lrcUri);
+            using var resp = await client.GetAsync(lrcUri, ct).ConfigureAwait(false);
             if (resp.IsSuccessStatusCode)
             {
-                var lrcContent = await resp.Content.ReadAsStringAsync();
+                var lrcContent = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
                 if (!string.IsNullOrWhiteSpace(lrcContent))
                 {
-                    await File.WriteAllTextAsync(localLrcPath, lrcContent, Encoding.UTF8);
+                    await File.WriteAllTextAsync(localLrcPath, lrcContent, Encoding.UTF8, ct).ConfigureAwait(false);
                     CacheManager.RecordAccess($"webdav/{Path.GetFileName(localLrcPath)}", new FileInfo(localLrcPath).Length);
+                    return lrcContent;
                 }
             }
         }
@@ -46,6 +53,7 @@ public static partial class WebDavService
         {
             // 远端可能没有单独的 .lrc 文件，后续回退读取内嵌歌词
         }
+        return null;
     }
 
     public static Song EnrichSongMetadata(WebDavServer server, Song song, string localPath)

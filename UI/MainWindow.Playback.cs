@@ -180,19 +180,10 @@ public sealed partial class MainWindow
                                : song.Quality.Contains("HQ", StringComparison.OrdinalIgnoreCase) ? AudioQualityTier.HQ
                                : AudioQualityTier.Standard;
 
-            // 1. 优先读取落盘音频文件的内嵌歌词（零额外网络往返）
-            lyrics = !string.IsNullOrEmpty(playUrl) ? await LocalMusicService.GetLyricsAsync(song, playUrl) : [];
-            if (IsStale()) return;
-
-            // 2. 仅当文件内没有内嵌歌词时，才发起网络请求尝试探测下载远端同名 .lrc
-            if (lyrics.Count == 0 && server != null && !string.IsNullOrEmpty(song.WebDavHref) && !string.IsNullOrEmpty(playUrl))
-            {
-                await WebDavService.TryDownloadRemoteLrcAsync(server, song.WebDavHref, playUrl);
-                if (IsStale()) return;
-                lyrics = await LocalMusicService.GetLyricsAsync(song, playUrl);
-            }
-
-            if (IsStale()) return;
+            // 通过级联策略加载 WebDAV 内嵌歌词（本地缓存 → 内存缓存 → 远端 .lrc → Range 头部提取）
+            lyrics = server != null && !string.IsNullOrEmpty(song.WebDavHref)
+                ? await WebDavService.EnsureLyricsAsync(server, song).ConfigureAwait(false)
+                : [];
 
             // 同步更新全局激活歌曲与控制栏/MPRIS/AOD 状态
             _activeSong = song;
