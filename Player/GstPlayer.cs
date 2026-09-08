@@ -33,6 +33,12 @@ public sealed partial class GstPlayer : IPlayer
     {
         try
         {
+            // 若用户未显式指定 GST_AUDIO_SINK，预设抗抖动环境变量以防底层 autoaudiosink 派生未捕获
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GST_AUDIO_SINK")))
+            {
+                Environment.SetEnvironmentVariable("GST_AUDIO_SINK", "pulsesink buffer-time=200000 latency-time=50000 client-name=\"QQMusic TUI\"");
+            }
+
             gst_init(0, 0);
             AppLogger.Info("GstPlayer", "GStreamer initialized successfully (in-process)");
 
@@ -41,6 +47,7 @@ public sealed partial class GstPlayer : IPlayer
                 _pipeline = gst_element_factory_make("playbin", "qqmusic_playbin");
                 if (_pipeline != 0)
                 {
+                    ConfigureAudioSink(_pipeline);
                     SetVolume(Volume);
                     AppLogger.Info("GstPlayer", "GStreamer playbin pipeline created");
                 }
@@ -254,6 +261,49 @@ public sealed partial class GstPlayer : IPlayer
         }
     }
 
+    private static void ConfigureAudioSink(nint pipeline)
+    {
+        try
+        {
+            var customEnv = Environment.GetEnvironmentVariable("GST_AUDIO_SINK");
+            if (!string.IsNullOrWhiteSpace(customEnv) && !customEnv.StartsWith("pulsesink", StringComparison.OrdinalIgnoreCase))
+            {
+                AppLogger.Info("GstPlayer", $"Using user-specified GST_AUDIO_SINK: {customEnv}");
+                return;
+            }
+
+            // 优先配置 pulsesink 并注入抗抖动缓冲参数（200ms 缓冲与 50ms 周期，适应高负载游戏环境）
+            var sink = gst_element_factory_make("pulsesink", "qqmusic_pulsesink");
+            if (sink != 0)
+            {
+                gst_util_set_object_arg(sink, "client-name", "QQMusic TUI");
+                gst_util_set_object_arg(sink, "buffer-time", "200000");
+                gst_util_set_object_arg(sink, "latency-time", "50000");
+                g_object_set(pipeline, "audio-sink", sink, 0);
+                AppLogger.Info("GstPlayer", "Custom pulsesink configured (buffer-time=200000, latency-time=50000, client-name=QQMusic TUI)");
+                return;
+            }
+
+            // 备用 pipewiresink 探测
+            sink = gst_element_factory_make("pipewiresink", "qqmusic_pipewiresink");
+            if (sink != 0)
+            {
+                gst_util_set_object_arg(sink, "client-name", "QQMusic TUI");
+                g_object_set(pipeline, "audio-sink", sink, 0);
+                AppLogger.Info("GstPlayer", "Custom pipewiresink configured (client-name=QQMusic TUI)");
+                return;
+            }
+
+            AppLogger.Warn("GstPlayer", "Neither pulsesink nor pipewiresink available, falling back to default autoaudiosink");
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Warn("GstPlayer", $"Failed to configure custom audio-sink, fallback to default: {ex.Message}");
+        }
+    }
+
+    private const string LibGObject = "libgobject-2.0.so.0";
+
     [LibraryImport(LibGst)]
     private static partial void gst_init(nint argc, nint argv);
 
@@ -262,6 +312,9 @@ public sealed partial class GstPlayer : IPlayer
 
     [LibraryImport(LibGst, StringMarshalling = StringMarshalling.Utf8)]
     private static partial void gst_util_set_object_arg(nint obj, string name, string value);
+
+    [LibraryImport(LibGObject, StringMarshalling = StringMarshalling.Utf8)]
+    private static partial void g_object_set(nint obj, string property_name, nint value, nint sentinel);
 
     [LibraryImport(LibGst)]
     private static partial int gst_element_set_state(nint element, int state);

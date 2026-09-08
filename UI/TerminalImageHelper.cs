@@ -556,12 +556,12 @@ public static class TerminalImageHelper
                     if (offset == 0)
                     {
                         int m = isLast ? 0 : 1;
-                        writer.Write($"\x1b_Ga=T,f=100,c={cols},r={rows},m={m};{chunk}\x1b\\");
+                        writer.Write($"\x1b_Ga=T,q=2,f=100,c={cols},r={rows},m={m};{chunk}\x1b\\");
                     }
                     else
                     {
                         int m = isLast ? 0 : 1;
-                        writer.Write($"\x1b_Gm={m};{chunk}\x1b\\");
+                        writer.Write($"\x1b_Gq=2,m={m};{chunk}\x1b\\");
                     }
                 }
                 writer.Flush();
@@ -661,7 +661,7 @@ public static class TerminalImageHelper
         if (!IsImageSupported) return;
         try
         {
-            byte[] cmd = Encoding.ASCII.GetBytes("\x1b_Ga=d,d=a\x1b\\");
+            byte[] cmd = Encoding.ASCII.GetBytes("\x1b_Ga=d,d=a,q=2\x1b\\");
             WriteRawBytesToTerminal(cmd);
         }
         catch

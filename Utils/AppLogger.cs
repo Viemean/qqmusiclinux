@@ -44,6 +44,14 @@ public static class AppLogger
         Log("WARN", module, message);
     }
 
+    /// <summary>
+    /// 强制写入日志文件
+    /// </summary>
+    public static void Force(string module, string message)
+    {
+        Log("FORCE", module, message);
+    }
+
     public static void Debug(string module, string message)
     {
         if (s_debugEnabled) Log("DEBUG", module, message);

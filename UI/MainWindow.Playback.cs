@@ -65,6 +65,7 @@ public sealed partial class MainWindow
             _standaloneWebServer.ActualQualityTier = _actualQualityTier;
             _standaloneWebServer.PreferredQualityTier = _preferredQualityTier;
             _standaloneWebServer.CurrentPlayUrl = null;
+            _currentPlayUrl = null;
             _standaloneWebServer.IsPlaying = false;
             _standaloneWebServer.CurrentPositionSeconds = 0;
             _standaloneWebServer.TotalDurationSeconds = song.Duration;
@@ -189,6 +190,7 @@ public sealed partial class MainWindow
                 StartWebVirtualTicker(song.Duration);
             }
 
+            _currentPlayUrl = playUrl;
             if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
             {
                 _standaloneWebServer.CurrentPlayUrl = playUrl;
@@ -720,6 +722,7 @@ public sealed partial class MainWindow
                     _nowPlayingView.SetSong(_activeSong, AudioQualityHelper.GetBadge(actualTier));
                     UpdatePlayerStatus();
                 });
+                _currentPlayUrl = url;
                 if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
                 {
                     _standaloneWebServer.CurrentPlayUrl = url;
