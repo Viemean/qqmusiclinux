@@ -658,8 +658,20 @@ class ElectronMusicPlayer {
       this.updateMediaSessionPosition();
     }
 
-    // 5. 进度与总时长对齐 (仅当音频就绪、不在 seeking 状态且差值大于 3.5 秒时校准，避免高频打断解码管线)
-    if (data.position !== undefined && !this.isSeeking) {
+    // 5. 进度与总时长对齐
+    if (data.type === 'seek' && data.position !== undefined) {
+      this.state.currentPosition = data.position;
+      if (this.audioElement.src) {
+        if (this.audioElement.readyState >= 2 && !this.audioElement.seeking) {
+          this.audioElement.currentTime = data.position;
+          this.updateMediaSessionPosition();
+        } else {
+          this.pendingSeekPosition = data.position;
+        }
+      }
+      this.updateProgressUI();
+      this.updateLyricsPosition(data.position);
+    } else if (data.position !== undefined && !this.isSeeking) {
       this.state.currentPosition = data.position;
       if (
         this.audioElement.src &&

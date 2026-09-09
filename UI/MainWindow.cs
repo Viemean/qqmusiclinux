@@ -814,11 +814,14 @@ public sealed partial class MainWindow : Window
         _songListView.AlbumClicked += (s) => OnAlbumClicked(s);
         _controlBar.SeekRequested += async (ratio) =>
         {
-            if (_player.TotalDurationSeconds > 0)
+            double totalSec = _player.TotalDurationSeconds > 0
+                ? _player.TotalDurationSeconds
+                : (_activeSong?.Duration > 0 ? _activeSong.Duration : (_standaloneWebServer?.TotalDurationSeconds ?? 0));
+
+            if (totalSec > 0)
             {
-                var targetSec = ratio * _player.TotalDurationSeconds;
-                await _player.SeekAsync(targetSec);
-                Application.Invoke(() => UpdateProgress(targetSec));
+                var targetSec = Math.Clamp(ratio * totalSec, 0, totalSec);
+                await SeekPlaybackPositionAsync(targetSec);
             }
         };
         _controlBar.UpdateVolume(initialVolume, initialVolume == 0);
@@ -952,7 +955,7 @@ public sealed partial class MainWindow : Window
         _nowPlayingView.BackRequested += CloseNowPlayingView;
         _nowPlayingView.SeekRequested += async (time) =>
         {
-            await _player.SeekAsync(time.TotalSeconds);
+            await SeekPlaybackPositionAsync(time.TotalSeconds);
         };
         _nowPlayingView.ToggleTranslationRequested += ToggleTranslation;
         _nowPlayingView.ToggleImmersiveRequested += ToggleImmersiveMode;
@@ -1132,4 +1135,44 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async Task SeekPlaybackPositionAsync(double targetSec)
+    {
+        double totalSec = _player.TotalDurationSeconds > 0
+            ? _player.TotalDurationSeconds
+            : (_activeSong?.Duration > 0 ? _activeSong.Duration : (_standaloneWebServer?.TotalDurationSeconds ?? 0));
+
+        if (totalSec > 0)
+        {
+            targetSec = Math.Clamp(targetSec, 0, totalSec);
+        }
+
+        if (_isTuiAudioDisabled)
+        {
+            _webVirtualPosition = targetSec;
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+            {
+                _standaloneWebServer.CurrentPositionSeconds = targetSec;
+                _standaloneWebServer.BroadcastState("seek");
+            }
+            Application.Invoke(() =>
+            {
+                UpdateProgress(targetSec);
+                UpdateLyrics(targetSec);
+            });
+        }
+        else
+        {
+            await _player.SeekAsync(targetSec);
+            if (_standaloneWebServer != null && _standaloneWebServer.IsRunning)
+            {
+                _standaloneWebServer.CurrentPositionSeconds = targetSec;
+                _standaloneWebServer.BroadcastState("seek");
+            }
+            Application.Invoke(() =>
+            {
+                UpdateProgress(targetSec);
+                UpdateLyrics(targetSec);
+            });
+        }
+    }
 }
