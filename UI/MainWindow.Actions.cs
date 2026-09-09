@@ -43,7 +43,14 @@ public sealed partial class MainWindow
         UserConfig.Current.EnableSongSwitchNotification = !UserConfig.Current.EnableSongSwitchNotification;
         UserConfig.Current.Save();
         string stateStr = UserConfig.Current.EnableSongSwitchNotification ? "已开启" : "已关闭";
-        _controlBar.UpdateStatus($"[桌面通知] 切歌气泡已{stateStr} (按 B 切换)");
+        if (!DesktopNotificationService.Instance.IsAvailable && UserConfig.Current.EnableSongSwitchNotification)
+        {
+            _controlBar.UpdateStatus("[桌面通知] 当前系统环境未检测到可用的 D-Bus 通知服务");
+        }
+        else
+        {
+            _controlBar.UpdateStatus($"[桌面通知] 切歌气泡已{stateStr} (按 B 切换)");
+        }
         AppLogger.Info("MainWindow", $"Desktop song switch notification toggled: {stateStr}");
     }
 

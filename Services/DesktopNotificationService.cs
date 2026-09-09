@@ -30,6 +30,37 @@ public sealed unsafe partial class DesktopNotificationService : IDisposable
     {
     }
 
+    public bool IsAvailable => _isAvailable;
+
+    /// <summary>
+    /// 检查当前环境是否具备 D-Bus 会话总线连接条件
+    /// </summary>
+    public static bool HasSessionBusAddress()
+    {
+        if (!OperatingSystem.IsLinux()) return false;
+
+        var noNotifyEnv = Environment.GetEnvironmentVariable("QQMUSIC_NO_NOTIFY") ?? Environment.GetEnvironmentVariable("QQMUSIC_DISABLE_NOTIFY");
+        if (noNotifyEnv == "1" || string.Equals(noNotifyEnv, "true", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var addr = Environment.GetEnvironmentVariable("DBUS_SESSION_BUS_ADDRESS");
+        if (!string.IsNullOrEmpty(addr)) return true;
+
+        try
+        {
+            uint uid = geteuid();
+            if (File.Exists($"/run/user/{uid}/bus")) return true;
+        }
+        catch
+        {
+            // 忽略读取 uid 异常
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// 初始化 D-Bus 会话总线连接
     /// </summary>
@@ -48,13 +79,31 @@ public sealed unsafe partial class DesktopNotificationService : IDisposable
                 return;
             }
 
+            if (!HasSessionBusAddress())
+            {
+                _isAvailable = false;
+                AppLogger.Info("DesktopNotification", "D-Bus session bus not detected in current environment. Notification service will not be started.");
+                return;
+            }
+
             try
             {
                 _connection = g_bus_get_sync(G_BUS_TYPE_SESSION, 0, out nint error);
                 if (_connection != 0)
                 {
+                    // 检测环境中是否真正存在 org.freedesktop.Notifications 服务守护进程
+                    bool hasNotificationDaemon = CheckNotificationDaemonRunning(_connection);
+                    if (!hasNotificationDaemon)
+                    {
+                        _isAvailable = false;
+                        g_object_unref(_connection);
+                        _connection = 0;
+                        AppLogger.Info("DesktopNotification", "D-Bus session bus is present, but org.freedesktop.Notifications daemon is not running. Notification service will not be started.");
+                        return;
+                    }
+
                     _isAvailable = true;
-                    AppLogger.Info("DesktopNotification", "Connected to D-Bus session bus for notifications.");
+                    AppLogger.Info("DesktopNotification", "Connected to D-Bus session bus and confirmed notification service is available.");
                 }
                 else
                 {
@@ -68,6 +117,51 @@ public sealed unsafe partial class DesktopNotificationService : IDisposable
                 AppLogger.Warn("DesktopNotification", $"Failed to initialize D-Bus notification service: {ex.Message}");
             }
         }
+    }
+
+    private static bool CheckNotificationDaemonRunning(nint connection)
+    {
+        if (connection == 0) return false;
+        try
+        {
+            nint[] paramChildren = [g_variant_new_string("org.freedesktop.Notifications")];
+            nint parameters = g_variant_new_tuple(paramChildren, 1);
+            nint reply = g_dbus_connection_call_sync(
+                connection,
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                "org.freedesktop.DBus",
+                "NameHasOwner",
+                parameters,
+                0,
+                0,
+                500,
+                0,
+                out nint callErr
+            );
+
+            if (reply != 0)
+            {
+                nint child = g_variant_get_child_value(reply, 0);
+                bool hasOwner = false;
+                if (child != 0)
+                {
+                    hasOwner = g_variant_get_boolean(child);
+                    g_variant_unref(child);
+                }
+                g_variant_unref(reply);
+                return hasOwner;
+            }
+            else if (callErr != 0)
+            {
+                g_error_free(callErr);
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Debug("DesktopNotification", $"CheckNotificationDaemonRunning error: {ex.Message}");
+        }
+        return false;
     }
 
     /// <summary>
@@ -311,6 +405,16 @@ public sealed unsafe partial class DesktopNotificationService : IDisposable
 
     [LibraryImport(LibGlib)]
     private static partial void g_variant_unref(nint value);
+
+    [LibraryImport(LibGlib)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool g_variant_get_boolean(nint value);
+
+    [LibraryImport("libgobject-2.0.so.0")]
+    private static partial void g_object_unref(nint obj);
+
+    [LibraryImport("libc")]
+    private static partial uint geteuid();
 
     [LibraryImport(LibGlib)]
     private static partial void g_error_free(nint error);
