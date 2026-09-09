@@ -191,7 +191,6 @@ public static partial class TerminalImageHelper
     public static async Task<string?> EnsureLocalImageProcessedAsync(string localRawImagePath, string cacheKey)
     {
         if (string.IsNullOrWhiteSpace(localRawImagePath) || !File.Exists(localRawImagePath)) return null;
-        if (!IsImageSupported) return localRawImagePath;
 
         var pngFile = Path.Combine(s_cacheDir, $"local_{cacheKey}.png");
         if (File.Exists(pngFile))
@@ -212,8 +211,25 @@ public static partial class TerminalImageHelper
         {
             CacheManager.RecordAccess($"covers/{Path.GetFileName(processed)}", new FileInfo(processed).Length);
             CacheManager.EnforceLimitAsync();
+            return processed;
         }
-        return processed ?? localRawImagePath;
+
+        // 若圆角生成失败且输入为临时文件，复制为持久化文件以防外层删除临时文件导致无法被 Web 读取
+        if (localRawImagePath.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+        {
+            var persistentFallback = Path.Combine(s_cacheDir, $"local_{cacheKey}.raw");
+            try
+            {
+                File.Copy(localRawImagePath, persistentFallback, overwrite: true);
+                return persistentFallback;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        return localRawImagePath;
     }
 
     /// <summary>
