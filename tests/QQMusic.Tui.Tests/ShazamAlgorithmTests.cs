@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
-using Xunit;
+using QQMusic.Tui.Models;
+using QQMusic.Tui.Services;
 using QQMusic.Tui.Services.Shazam;
+using Xunit;
 
 namespace QQMusic.Tui.Tests;
 
@@ -37,26 +40,30 @@ public class ShazamAlgorithmTests
         Assert.True(sig.NumberSamples > 0);
         Assert.NotNull(uri);
         Assert.StartsWith("data:audio/vnd.shazam.sig;base64,", uri);
-        
-        // 输出调试信息 (通过 xunit test runner)
-        Console.WriteLine($"Seconds: {seconds:F1}, TotalPeaks: {totalPeaks}, UriLength: {uri.Length}");
+        Assert.True(totalPeaks > 0);
     }
 
     [Fact]
-    public async System.Threading.Tasks.Task TestMatchWithQqMusic()
+    public void FindBestMatchedSong_FromCandidates_MatchesHighestSimilarityOffline()
     {
-        var songs = await QQMusic.Tui.Api.QqMusicApi.SearchAsync("恋音と雨空 Lefty Hand Cream", 1, 10);
-        Assert.NotNull(songs);
-        Assert.NotEmpty(songs);
+        // 纯离线单元测试：构造包含精确匹配项、部分同名但不同歌手项、以及无关歌曲的候选列表
+        var candidates = new List<Song>
+        {
+            new Song("001_unrelated", "夜曲", "周杰伦", "十一月的萧邦", 226),
+            new Song("002g7Bfv0Ri1Qi", "恋音と雨空 (恋歌与雨天)", "Lefty Hand Cream", "1LDK", 260),
+            new Song("003_cover", "恋音と雨空", "AAA", "GOLD SYMPHONY", 310),
+            new Song("004_other", "晴天", "周杰伦", "叶惠美", 269)
+        };
 
-        var matched = QQMusic.Tui.Services.AudioRecognitionService.FindBestMatchedSong(
+        var matched = AudioRecognitionService.FindBestMatchedSong(
             "恋音と雨空",
             "Lefty hand cream",
             "1LDK",
-            songs);
+            candidates);
 
-        Console.WriteLine($"Best matched song: {matched?.Title} by {matched?.Artist} ({matched?.Mid})");
         Assert.NotNull(matched);
         Assert.Equal("002g7Bfv0Ri1Qi", matched.Mid);
+        Assert.Equal("Lefty Hand Cream", matched.Artist);
+        Assert.Contains("恋音と雨空", matched.Title);
     }
 }
