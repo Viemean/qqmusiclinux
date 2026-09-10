@@ -31,11 +31,10 @@ fi
 # 获取目标版本号 (支持通过入参指定，默认读取最新的 Git Tag 或 Program.cs)
 VERSION="${1:-}"
 if [ -z "${VERSION}" ]; then
-    LATEST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
-    if [ -n "${LATEST_TAG}" ]; then
+    VERSION="$(grep -oP 'qqmusic-tui \K[0-9.]+' Program.cs | head -n 1 || echo "")"
+    if [ -z "${VERSION}" ]; then
+        LATEST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo "")"
         VERSION="${LATEST_TAG#v}"
-    else
-        VERSION="$(grep -oP 'qqmusic-tui \K[0-9.]+' Program.cs | head -n 1 || echo "0.2.0")"
     fi
 fi
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 入参：版本号、包构建号、目标架构 (amd64 / arm64)、.NET Runtime ID (RID)
-VERSION="${1:-0.2.0}"
+VERSION="${1:-0.2.1}"
 PKGREL="${2:-1}"
 ARCH="${3:-amd64}"
 
