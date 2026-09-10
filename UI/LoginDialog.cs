@@ -94,7 +94,7 @@ public sealed class LoginDialog : Dialog
 
         _providerLabel = new Label
         {
-            Text = "当前方式: QQ（请使用手机 QQ 扫码）",
+            Text = "当前方式: QQ",
             X = Pos.Right(qqMusicBtn) + 2,
             Y = 2
         };
@@ -256,13 +256,7 @@ public sealed class LoginDialog : Dialog
             if (_loginType == type) return;
             _loginType = type;
             var name = LoginService.GetLoginTypeName(type);
-            var scanner = type switch
-            {
-                LoginService.QrLoginType.Qq => "手机 QQ",
-                LoginService.QrLoginType.WeChat => "微信",
-                _ => "QQ音乐 APP"
-            };
-            _providerLabel.Text = $"当前方式: {name}（请使用{scanner}扫码）";
+            _providerLabel.Text = $"当前方式: {name}";
             _httpServer?.UpdateLoginType(name);
             _webStatusLabel.Text = $"状态: 正在切换到{name}登录...";
             _qrStatusLabel.Text = $"状态: 正在切换到{name}登录...";
