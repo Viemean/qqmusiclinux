@@ -66,11 +66,16 @@ jobs:
           fi
           BIN_PATH="bin/Release/net10.0/${{ matrix.rid }}/publish/QQMusic.Tui"
 
-          # 独立单文件通用 tar.gz 压缩包 (解压即为可执行文件 qqmusic-tui)
+          # 独立通用 tar.gz 压缩包 (包含可执行文件 qqmusic-tui 与 qafp 识曲运行时)
           STAGE_DIR=$(mktemp -d /tmp/qqmusic_standalone.XXXXXX)
           cp "$BIN_PATH" "$STAGE_DIR/qqmusic-tui"
           chmod 755 "$STAGE_DIR/qqmusic-tui"
-          tar -czvf "qqmusic-tui-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C "$STAGE_DIR" qqmusic-tui
+          if [ -d "Services/QqAudioRecognition/Runtime/qafp" ]; then
+            cp -r "Services/QqAudioRecognition/Runtime/qafp" "$STAGE_DIR/qafp"
+            chmod 755 "$STAGE_DIR/qafp/qafp_runner" || true
+            chmod 755 "$STAGE_DIR/qafp/sysroot/system/bin/linker64" || true
+          fi
+          tar -czvf "qqmusic-tui-${VERSION}-linux-${{ matrix.arch }}.tar.gz" -C "$STAGE_DIR" .
           rm -rf "$STAGE_DIR"
 
       - name: Upload Package Artifact

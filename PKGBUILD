@@ -44,4 +44,11 @@ package() {
     if [ -d "${_www_src}" ]; then
         cp -r "${_www_src}" "${pkgdir}/usr/share/qqmusic-tui/"
     fi
+
+    local _qafp_src="${srcdir}/../Services/QqAudioRecognition/Runtime/qafp"
+    if [ -d "${_qafp_src}" ]; then
+        cp -r "${_qafp_src}" "${pkgdir}/usr/share/qqmusic-tui/"
+        chmod 755 "${pkgdir}/usr/share/qqmusic-tui/qafp/qafp_runner" || true
+        chmod 755 "${pkgdir}/usr/share/qqmusic-tui/qafp/sysroot/system/bin/linker64" || true
+    fi
 }

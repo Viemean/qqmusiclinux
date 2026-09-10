@@ -55,6 +55,20 @@ if [ -d "www" ]; then
     cp -r www/* "$STAGE_DIR/usr/share/qqmusic-tui/www/"
 fi
 
+# 复制 QAFP 官方听歌识曲运行时 (微型 Bionic sysroot、libMusicWrapper.so 及模型)
+QAFP_SRC="Services/QqAudioRecognition/Runtime/qafp"
+if [ ! -d "$QAFP_SRC" ] && [ -d "$HOME/.local/share/qqmusic-tui/qafp" ]; then
+    QAFP_SRC="$HOME/.local/share/qqmusic-tui/qafp"
+fi
+
+if [ -d "$QAFP_SRC" ]; then
+    echo "==> Packing QAFP audio recognition runtime from $QAFP_SRC..."
+    mkdir -p "$STAGE_DIR/usr/share/qqmusic-tui/qafp"
+    cp -r "$QAFP_SRC/." "$STAGE_DIR/usr/share/qqmusic-tui/qafp/"
+    chmod 755 "$STAGE_DIR/usr/share/qqmusic-tui/qafp/qafp_runner" || true
+    chmod 755 "$STAGE_DIR/usr/share/qqmusic-tui/qafp/sysroot/system/bin/linker64" || true
+fi
+
 # Debian Installed-Size 单位是 KiB
 INSTALLED_SIZE=$(du -sk "$STAGE_DIR/usr" | awk '{print $1}')
 

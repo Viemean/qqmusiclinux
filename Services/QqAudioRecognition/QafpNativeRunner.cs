@@ -101,6 +101,10 @@ public static class QafpNativeRunner
             var envDir = Environment.GetEnvironmentVariable("QQMUSIC_QAFP_RUNNER_DIR");
             if (!string.IsNullOrEmpty(envDir)) candidates.Add(envDir);
 
+            // 系统级共享目录 (包管理器安装标准路径)
+            candidates.Add("/usr/share/qqmusic-tui/qafp");
+            candidates.Add("/usr/local/share/qqmusic-tui/qafp");
+
             // 用户本地数据目录
             var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             if (!string.IsNullOrEmpty(userHome))
@@ -114,11 +118,13 @@ public static class QafpNativeRunner
             {
                 candidates.Add(Path.Combine(baseDir, "qafp"));
                 candidates.Add(Path.Combine(baseDir, ".bin", "qafp"));
+                candidates.Add(Path.Combine(baseDir, "Services", "QqAudioRecognition", "Runtime", "qafp"));
             }
 
-            // 当前工作目录
+            // 当前工作目录与源码目录
             var cwd = Directory.GetCurrentDirectory();
             candidates.Add(Path.Combine(cwd, ".bin", "qafp"));
+            candidates.Add(Path.Combine(cwd, "Services", "QqAudioRecognition", "Runtime", "qafp"));
             candidates.Add("/tmp/qafp_runtime");
 
             foreach (var dir in candidates)

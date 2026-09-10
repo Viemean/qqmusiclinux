@@ -134,16 +134,27 @@ echo "-> aarch64 SHA256: ${SHA256_ARM}"
 
 rm -rf "${TEMP_DIR}"
 
-# 步骤 3: 切换至 aur-tui 分支
-echo -e "\n==> [3/5] 切换至 aur-tui 分支并同步远程状态..."
+# 步骤 3 & 4: 使用临时 Git Worktree 更新 AUR PKGBUILD 与 .SRCINFO
+echo -e "\n==> [3/5] 在独立工作树中检出 aur-tui 分支并同步远程状态..."
+AUR_WT_DIR="$(mktemp -d /tmp/qqmusic_aur_wt_XXXXXX)"
+
+cleanup_aur_wt() {
+    if [ -d "${AUR_WT_DIR}" ]; then
+        cd "${WORK_DIR}"
+        git worktree remove --force "${AUR_WT_DIR}" 2>/dev/null || rm -rf "${AUR_WT_DIR}"
+    fi
+}
+trap cleanup_aur_wt EXIT
+
 if ! git rev-parse --verify aur-tui >/dev/null 2>&1; then
-    git checkout -b aur-tui origin/aur-tui
+    git worktree add -B aur-tui "${AUR_WT_DIR}" origin/aur-tui
 else
-    git checkout aur-tui
-    git pull origin aur-tui --ff-only || true
+    git worktree add "${AUR_WT_DIR}" aur-tui
 fi
 
-# 步骤 4: 更新 AUR PKGBUILD 与 .SRCINFO
+cd "${AUR_WT_DIR}"
+git pull origin aur-tui --ff-only 2>/dev/null || true
+
 echo -e "\n==> [4/5] 正在生成 AUR PKGBUILD 与 .SRCINFO..."
 cat << 'EOF' > PKGBUILD
 # Maintainer: Yuzuki <lxf74663@gmail.com>
@@ -210,6 +221,10 @@ git push origin aur-tui
 
 echo "推送至官方 AUR 仓库 (ssh://aur@aur.archlinux.org/qqmusic-tui-bin.git)..."
 git push aur-tui aur-tui:master
+
+# 清理临时工作树
+cd "${WORK_DIR}"
+git worktree remove --force "${AUR_WT_DIR}" 2>/dev/null || true
 
 echo -e "\n=================================================="
 echo "恭喜！v${VERSION} 已成功发布并同步至 Arch Linux AUR！"
