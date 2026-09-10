@@ -44,10 +44,10 @@ public class OfficialApiTests
     }
 
     /// <summary>
-    /// 初始化测试运行鉴权凭证：
-    /// 1. 标准规范：优先从环境变量 QQMUSIC_TEST_COOKIE / QQMUSIC_TEST_UIN 读取专用测试账号凭证
-    /// 2. 显式本地授权：只有在显式设置环境变量 QQMUSIC_USE_LOCAL_SESSION=1 时，才允许加载本地 TUI 真实会话 (~/.config/qqmusic-tui/session.json)
-    /// 3. 默认隔离模式：未配置上述环境变量时，默认以无状态游客模式执行，杜绝隐式读取宿主机隐私或污染个人数据
+    /// 初始化测试运行凭证：
+    /// 1. 优先读取环境变量 QQMUSIC_TEST_COOKIE / QQMUSIC_TEST_UIN；
+    /// 2. 若配置 QQMUSIC_USE_LOCAL_SESSION=1，读取本地会话文件 (~/.config/qqmusic-tui/session.json)；
+    /// 3. 未配置上述变量时，使用游客模式。
     /// </summary>
     private void EnsureSessionAndConfigInitialized()
     {
@@ -75,27 +75,27 @@ public class OfficialApiTests
                 {
                     UserSession.Current.Uin = u.TrimStart('o');
                 }
-                _output.WriteLine($"[鉴权初始化] 已从环境变量注入专用测试 Cookie，Uin: {MaskIdentifier(UserSession.Current.Uin)}");
+                _output.WriteLine($"[鉴权初始化] 从环境变量加载 Cookie，Uin: {MaskIdentifier(UserSession.Current.Uin)}");
             }
             else if (allowLocalSession)
             {
-                // 显式授权时才读取本地真实登录信息
+                // 读取本地会话
                 UserSession.Load();
                 if (UserSession.Current.IsLoggedIn)
                 {
-                    _output.WriteLine($"[鉴权初始化] 已显式授权加载本地会话，Uin: {MaskIdentifier(UserSession.Current.Uin)}, 昵称: {UserSession.Current.Nick}, VIP: {UserSession.Current.IsVip}");
+                    _output.WriteLine($"[鉴权初始化] 加载本地会话，Uin: {MaskIdentifier(UserSession.Current.Uin)}, 昵称: {UserSession.Current.Nick}, VIP: {UserSession.Current.IsVip}");
                 }
                 else
                 {
-                    _output.WriteLine("[鉴权初始化] 本地未检测到有效登录凭据，以游客模式运行");
+                    _output.WriteLine("[鉴权初始化] 本地无有效凭据，以游客模式运行");
                 }
             }
             else
             {
-                _output.WriteLine("[鉴权初始化] 默认测试隔离模式运行（未设置 QQMUSIC_TEST_COOKIE 且未开启 QQMUSIC_USE_LOCAL_SESSION=1），以安全游客状态执行接口测试");
+                _output.WriteLine("[鉴权初始化] 未配置凭据与本地授权环境变量，以游客模式运行");
             }
 
-            // ACRCloud 密钥注入管理：优先环境变量，显式授权时才读取本地
+            // ACRCloud 凭据配置：优先环境变量，未授权时置空
             var acrKey = Environment.GetEnvironmentVariable("ACRCLOUD_ACCESS_KEY");
             var acrSecret = Environment.GetEnvironmentVariable("ACRCLOUD_ACCESS_SECRET");
             var acrHost = Environment.GetEnvironmentVariable("ACRCLOUD_HOST");
@@ -110,7 +110,7 @@ public class OfficialApiTests
             }
             else if (!allowLocalSession)
             {
-                // 未显式授权使用本地配置时，清空敏感密钥保证测试隔离
+                // 未开启本地会话时清空密钥
                 AcrCloudConfig.Current.AccessKey = "";
                 AcrCloudConfig.Current.AccessSecret = "";
             }
