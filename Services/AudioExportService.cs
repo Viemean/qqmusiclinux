@@ -122,8 +122,7 @@ public static class AudioExportService
             }
 
             // 尝试检索其他已缓存品质
-            AudioQualityTier[] fallbackTiers = [AudioQualityTier.SQ, AudioQualityTier.HQ, AudioQualityTier.Standard];
-            foreach (var tier in fallbackTiers)
+            foreach (var tier in AudioQualityHelper.SelectionOrder)
             {
                 if (tier == qualityTier) continue;
                 var fb = AudioCacheService.GetCachedAudioPath(song.Mid, tier);
@@ -208,7 +207,7 @@ public static class AudioExportService
         }
 
         // 兜底按品质判断
-        return (tier == AudioQualityTier.SQ || tier == AudioQualityTier.HiRes) ? ".flac" : ".mp3";
+        return AudioQualityHelper.GetExtension(tier);
     }
 
     /// <summary>

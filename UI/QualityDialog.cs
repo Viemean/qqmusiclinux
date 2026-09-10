@@ -35,8 +35,8 @@ public sealed class QualityDialog : Dialog
         _onQualitySelected = onQualitySelected;
 
         Title = customTitle;
-        Width = 56;
-        Height = 11;
+        Width = 64;
+        Height = 16;
         SetScheme(TransparentDialogScheme);
 
         var tipLabel = new Label
@@ -55,7 +55,7 @@ public sealed class QualityDialog : Dialog
             X = 2,
             Y = 2,
             Width = Dim.Fill(2),
-            Height = 4
+            Height = 7
         };
         _qualityListView.SetScheme(TransparentDialogScheme);
 
@@ -71,7 +71,7 @@ public sealed class QualityDialog : Dialog
         {
             Text = "确定",
             X = Pos.AnchorEnd(20),
-            Y = 7,
+            Y = 11,
             ShadowStyle = ShadowStyles.None
         };
         confirmBtn.KeyBindings.Remove(Key.Space);
@@ -82,7 +82,7 @@ public sealed class QualityDialog : Dialog
         {
             Text = "取消",
             X = Pos.AnchorEnd(10),
-            Y = 7,
+            Y = 11,
             ShadowStyle = ShadowStyles.None
         };
         cancelBtn.KeyBindings.Remove(Key.Space);
@@ -119,10 +119,10 @@ public sealed class QualityDialog : Dialog
     private void BuildDefaultOptions()
     {
         _options.Clear();
-        _options.Add(new QualityOption(AudioQualityTier.HiRes, "Hi-Res", "Hi-Res", "24bit / 96kHz", "", true));
-        _options.Add(new QualityOption(AudioQualityTier.SQ, "SQ", "SQ", "16bit / 44.1kHz", "", true));
-        _options.Add(new QualityOption(AudioQualityTier.HQ, "HQ", "HQ", "320kbps", "", true));
-        _options.Add(new QualityOption(AudioQualityTier.Standard, "标准", "标准", "128kbps", "", true));
+        foreach (var tier in AudioQualityHelper.SelectionOrder)
+        {
+            _options.Add(new QualityOption(tier, AudioQualityHelper.GetBadge(tier), AudioQualityHelper.GetQualityName(tier), AudioQualityHelper.GetDefaultSpec(tier), "", true));
+        }
     }
 
     private void RefreshDisplayList()

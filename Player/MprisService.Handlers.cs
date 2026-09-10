@@ -34,6 +34,7 @@ public sealed unsafe partial class MprisService
                         instance.QuitHandler?.Invoke();
                         break;
                     case "Raise":
+                        // CanRaise=false: terminal visibility is owned by the user's terminal emulator.
                         break;
                 }
             }
@@ -89,8 +90,8 @@ public sealed unsafe partial class MprisService
             }
         }
 
-        // 返回 void
-        g_dbus_method_invocation_return_value(invocation, 0);
+        // GDBusMethodInvocation takes ownership of this empty result.
+        g_dbus_method_invocation_return_value(invocation, g_variant_new_tuple([], 0));
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]

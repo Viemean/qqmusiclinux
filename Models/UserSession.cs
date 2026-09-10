@@ -18,6 +18,11 @@ public sealed class UserSession
     public string Nick { get; set; } = "";
     public bool IsVip { get; set; } = false;
     public string MusicKey { get; set; } = "";
+    public string EncryptedUin { get; set; } = "";
+    public string AvatarUrl { get; set; } = "";
+    public int VipLevel { get; set; } = 0;
+    public int MusicLevel { get; set; } = 0;
+    public string VipExpireAt { get; set; } = "";
     public string PreferredQuality { get; set; } = "SQ";
     public int Volume { get; set; } = 80;
     public PlaybackMode PlaybackMode { get; set; } = PlaybackMode.ListLoop;
@@ -42,6 +47,11 @@ public sealed class UserSession
             if (root.TryGetProperty("is_vip", out var v)) session.IsVip = v.GetBoolean();
             if (root.TryGetProperty("music_key", out var k)) session.MusicKey = k.GetString() ?? "";
             if (root.TryGetProperty("preferred_quality", out var q)) session.PreferredQuality = q.GetString() ?? "SQ";
+            if (root.TryGetProperty("encrypted_uin", out var eu)) session.EncryptedUin = eu.GetString() ?? "";
+            if (root.TryGetProperty("avatar_url", out var avatar)) session.AvatarUrl = avatar.GetString() ?? "";
+            if (root.TryGetProperty("vip_level", out var vipLevel) && vipLevel.TryGetInt32(out int vipLevelValue)) session.VipLevel = vipLevelValue;
+            if (root.TryGetProperty("music_level", out var musicLevel) && musicLevel.TryGetInt32(out int musicLevelValue)) session.MusicLevel = musicLevelValue;
+            if (root.TryGetProperty("vip_expire_at", out var vipExpire)) session.VipExpireAt = vipExpire.GetString() ?? "";
             if (root.TryGetProperty("volume", out var volProp) && volProp.TryGetInt32(out int vVal))
             {
                 session.Volume = Math.Clamp(vVal, 0, 100);
@@ -140,6 +150,11 @@ public sealed class UserSession
                 $"\"is_vip\":{(IsVip ? "true" : "false")}," +
                 $"\"music_key\":\"{JsonEscape(MusicKey)}\"," +
                 $"\"preferred_quality\":\"{JsonEscape(PreferredQuality)}\"," +
+                $"\"encrypted_uin\":\"{JsonEscape(EncryptedUin)}\"," +
+                $"\"avatar_url\":\"{JsonEscape(AvatarUrl)}\"," +
+                $"\"vip_level\":{VipLevel}," +
+                $"\"music_level\":{MusicLevel}," +
+                $"\"vip_expire_at\":\"{JsonEscape(VipExpireAt)}\"," +
                 $"\"volume\":{Volume}," +
                 $"\"playback_mode\":\"{PlaybackMode}\"," +
                 $"\"last_position\":{LastPlaybackPositionSeconds:F2}," +
@@ -162,6 +177,11 @@ public sealed class UserSession
         Nick = "";
         IsVip = false;
         MusicKey = "";
+        EncryptedUin = "";
+        AvatarUrl = "";
+        VipLevel = 0;
+        MusicLevel = 0;
+        VipExpireAt = "";
         Cookies.Clear();
 
         try

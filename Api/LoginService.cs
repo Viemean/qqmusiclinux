@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using System.Net;
 using System.Text.RegularExpressions;
 using QQMusic.Tui.Models;
@@ -15,7 +17,7 @@ public sealed partial class LoginService
 
     private static readonly HttpClient s_http = new(s_handler)
     {
-        Timeout = TimeSpan.FromSeconds(10)
+        Timeout = TimeSpan.FromSeconds(40)
     };
 
     private static readonly string s_loginReferer = "https://xui.ptlogin2.qq.com/cgi-bin/xlogin?appid=716027609&daid=383&style=33&login_text=%E7%99%BB%E5%BD%95&hide_title_bar=1&hide_border=1&target=self&s_url=https%3A%2F%2Fgraph.qq.com%2Foauth2.0%2Flogin_jump&pt_3rd_aid=100497308";
@@ -25,135 +27,233 @@ public sealed partial class LoginService
         s_http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36");
         s_http.DefaultRequestHeaders.Referrer = new Uri(s_loginReferer);
     }
+    public enum QrLoginType
+    {
+        Qq,
+        WeChat,
+        QqMusic
+    }
 
-    public record QrCodeResult(byte[] PngBytes, List<string> AsciiLines, string QrSig, int PtqrToken);
+    public enum QrLoginEvent
+    {
+        Done,
+        Waiting,
+        Confirming,
+        Expired,
+        Refused,
+        Error
+    }
 
-    public record PollStatus(int Code, string Message, string? RedirectUrl, string? Nick);
+    public sealed record QrCodeResult(byte[] ImageBytes, string MimeType, List<string> AsciiLines, QrLoginType Type, string Identifier);
 
-    /// <summary>
-    /// 获取 QQ 扫码登录二维码
-    /// </summary>
-    public static async Task<QrCodeResult?> FetchQrCodeAsync(CancellationToken ct = default)
+    public sealed record PollStatus(QrLoginEvent Event, int Code, string Message);
+
+    public static string GetLoginTypeName(QrLoginType type) => type switch
+    {
+        QrLoginType.Qq => "QQ",
+        QrLoginType.WeChat => "微信",
+        QrLoginType.QqMusic => "QQ音乐",
+        _ => "QQ"
+    };
+
+    public static Task<QrCodeResult?> FetchQrCodeAsync(CancellationToken ct = default) =>
+        FetchQrCodeAsync(QrLoginType.Qq, ct);
+
+    public static async Task<QrCodeResult?> FetchQrCodeAsync(QrLoginType type, CancellationToken ct = default)
     {
         try
         {
-            var random = Random.Shared.NextDouble();
-            var url = $"https://ssl.ptlogin2.qq.com/ptqrshow?appid=716027609&e=2&l=M&s=3&d=72&v=4&t={random:F6}&daid=383&pt_3rd_aid=100497308";
-            AppLogger.Info("LoginService", $"Fetching QR code from {url}");
-
-            using var resp = await s_http.GetAsync(url, ct).ConfigureAwait(false);
-            AppLogger.Debug("LoginService", $"FetchQrCode response status: {resp.StatusCode}");
-
-            if (!resp.IsSuccessStatusCode)
+            var qr = type switch
             {
-                AppLogger.Error("LoginService", $"FetchQrCode failed with HTTP status {resp.StatusCode}");
-                return null;
-            }
-
-            string qrsig = "";
-            if (resp.Headers.TryGetValues("Set-Cookie", out var cookies))
-            {
-                foreach (var c in cookies)
-                {
-                    AppLogger.Debug("LoginService", $"FetchQrCode Set-Cookie: {c}");
-                    var match = QrSigRegex().Match(c);
-                    if (match.Success)
-                    {
-                        qrsig = match.Groups[1].Value;
-                        break;
-                    }
-                }
-            }
-
-            if (string.IsNullOrEmpty(qrsig))
-            {
-                AppLogger.Error("LoginService", "Failed to find qrsig in Set-Cookie headers!");
-            }
-            else
-            {
-                AppLogger.Info("LoginService", $"Extracted qrsig length: {qrsig.Length}");
-            }
-
-            var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
-            AppLogger.Debug("LoginService", $"Received PNG bytes length: {bytes.Length}");
-
-            // 保存一份到 /tmp 供外部图像查看器打开
-            try
-            {
-                await File.WriteAllBytesAsync("/tmp/qqmusic_login_qr.png", bytes, ct).ConfigureAwait(false);
-                AppLogger.Info("LoginService", "Saved QR image to /tmp/qqmusic_login_qr.png");
-            }
-            catch (Exception ex)
-            {
-                AppLogger.Error("LoginService", "Error saving /tmp/qqmusic_login_qr.png", ex);
-            }
-
-            var asciiLines = PngQrReader.DecodePngToBlockText(bytes);
-            int ptqrToken = HashPtqrToken(qrsig);
-            AppLogger.Info("LoginService", $"Calculated ptqrToken: {ptqrToken}");
-
-            return new QrCodeResult(bytes, asciiLines, qrsig, ptqrToken);
+                QrLoginType.WeChat => await FetchWeChatQrCodeAsync(ct).ConfigureAwait(false),
+                QrLoginType.QqMusic => await FetchQqMusicQrCodeAsync(ct).ConfigureAwait(false),
+                _ => await FetchQqQrCodeAsync(ct).ConfigureAwait(false)
+            };
+            await TrySaveQrCodeAsync(qr.ImageBytes, qr.MimeType, ct).ConfigureAwait(false);
+            return qr;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return null;
         }
         catch (Exception ex)
         {
-            AppLogger.Error("LoginService", "FetchQrCodeAsync exception", ex);
+            AppLogger.Error("LoginService", $"FetchQrCodeAsync ({type}) failed", ex);
             return null;
         }
     }
 
-    /// <summary>
-    /// 轮询二维码扫码状态
-    /// </summary>
-    public static async Task<PollStatus> PollQrStatusAsync(string qrsig, int ptqrToken, CancellationToken ct = default)
+    public static async Task<PollStatus> PollQrStatusAsync(QrCodeResult qr, CancellationToken ct = default)
     {
         try
         {
-            var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var url = $"https://ssl.ptlogin2.qq.com/ptqrlogin?u1=https%3A%2F%2Fgraph.qq.com%2Foauth2.0%2Flogin_jump&ptqrtoken={ptqrToken}&ptredirect=0&h=1&t=1&g=1&from_ui=1&ptlang=2052&action=0-0-{ts}&js_ver=240905&js_type=1&login_sig=&pt_uistyle=40&aid=716027609&daid=383&pt_3rd_aid=100497308";
-
-            using var req = new HttpRequestMessage(HttpMethod.Get, url);
-            req.Headers.Add("Cookie", $"qrsig={qrsig};");
-            req.Headers.Referrer = new Uri(s_loginReferer);
-
-            using var resp = await s_http.SendAsync(req, ct).ConfigureAwait(false);
-            var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-            AppLogger.Debug("LoginService", $"Poll HTTP status: {resp.StatusCode}, raw: {text.Trim()}");
-
-            // 使用超高容错单引号匹配解析 ptuiCB 参数
-            var matches = SingleQuoteRegex().Matches(text);
-            if (matches.Count < 5)
+            return qr.Type switch
             {
-                AppLogger.Error("LoginService", $"Cannot parse ptuiCB, matches count: {matches.Count}, text: {text}");
-                return new PollStatus(-1, "响应解析异常", null, null);
-            }
-
-            var codeStr = matches[0].Groups[1].Value;
-            var redirectUrl = matches[2].Groups[1].Value;
-            var msg = matches[4].Groups[1].Value;
-            var nick = matches.Count >= 6 ? matches[5].Groups[1].Value : "";
-
-            int code = int.TryParse(codeStr, out var c) ? c : -1;
-            AppLogger.Info("LoginService", $"Parsed poll status - Code: {code}, Msg: '{msg}', Nick: '{nick}', RedirectUrl: '{redirectUrl}'");
-
-            if (code == 0)
-            {
-                AppLogger.Info("LoginService", "QR scan confirmed! Proceeding to exchange cookies via check_sig...");
-                await ExchangeCheckSigCookiesAsync(redirectUrl, qrsig, nick, ct).ConfigureAwait(false);
-            }
-
-            return new PollStatus(code, msg, redirectUrl, nick);
+                QrLoginType.WeChat => await PollWeChatQrStatusAsync(qr.Identifier, ct).ConfigureAwait(false),
+                QrLoginType.QqMusic => new PollStatus(QrLoginEvent.Error, -1, "QQ音乐扫码状态由实时连接处理"),
+                _ => await PollQqQrStatusAsync(qr.Identifier, ct).ConfigureAwait(false)
+            };
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            AppLogger.Debug("LoginService", "PollQrStatus canceled");
-            return new PollStatus(-999, "操作已取消", null, null);
+            return new PollStatus(QrLoginEvent.Error, -999, "操作已取消");
         }
         catch (Exception ex)
         {
-            AppLogger.Error("LoginService", "PollQrStatusAsync exception", ex);
-            return new PollStatus(-1, $"请求失败: {ex.Message}", null, null);
+            AppLogger.Error("LoginService", $"PollQrStatusAsync ({qr.Type}) failed", ex);
+            return new PollStatus(QrLoginEvent.Error, -1, $"请求失败: {ex.Message}");
         }
     }
+
+    private static async Task<QrCodeResult> FetchQqQrCodeAsync(CancellationToken ct)
+    {
+        var url = $"https://ssl.ptlogin2.qq.com/ptqrshow?appid=716027609&e=2&l=M&s=3&d=72&v=4&t={Random.Shared.NextDouble():F6}&daid=383&pt_3rd_aid=100497308";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.Referrer = new Uri("https://xui.ptlogin2.qq.com/");
+        using var resp = await s_http.SendAsync(req, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+
+        var qrsig = GetSetCookieValue(resp, "qrsig");
+        if (string.IsNullOrEmpty(qrsig)) throw new InvalidDataException("QQ 登录二维码缺少 qrsig");
+
+        var bytes = await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        return new QrCodeResult(bytes, "image/png", PngQrReader.DecodeToBlockText(bytes), QrLoginType.Qq, qrsig);
+    }
+
+    private static async Task<QrCodeResult> FetchWeChatQrCodeAsync(CancellationToken ct)
+    {
+        var redirectUri = Uri.EscapeDataString("https://y.qq.com/portal/wx_redirect.html?login_type=2&surl=https://y.qq.com/");
+        var href = Uri.EscapeDataString("https://y.qq.com/mediastyle/music_v17/src/css/popup_wechat.css#wechat_redirect");
+        var url = $"https://open.weixin.qq.com/connect/qrconnect?appid=wx48db31d50e334801&redirect_uri={redirectUri}&response_type=code&scope=snsapi_login&state=STATE&href={href}";
+        using var pageResp = await s_http.GetAsync(url, ct).ConfigureAwait(false);
+        pageResp.EnsureSuccessStatusCode();
+        var page = await pageResp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var match = WeChatUuidRegex().Match(page);
+        if (!match.Success) throw new InvalidDataException("微信登录二维码缺少 uuid");
+
+        var uuid = match.Groups[1].Value;
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"https://open.weixin.qq.com/connect/qrcode/{uuid}");
+        req.Headers.Referrer = new Uri("https://open.weixin.qq.com/connect/qrconnect");
+        using var qrResp = await s_http.SendAsync(req, ct).ConfigureAwait(false);
+        qrResp.EnsureSuccessStatusCode();
+        var bytes = await qrResp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
+        return new QrCodeResult(bytes, "image/jpeg", PngQrReader.DecodeToBlockText(bytes), QrLoginType.WeChat, uuid);
+    }
+
+    private static async Task<QrCodeResult> FetchQqMusicQrCodeAsync(CancellationToken ct)
+    {
+        const string payload = "{\"comm\":{\"ct\":23,\"cv\":0},\"req_0\":{\"module\":\"music.login.LoginServer\",\"method\":\"CreateQRCode\",\"param\":{\"tmeAppID\":\"qqmusic\",\"ct\":11,\"cv\":14090008}}}";
+        using var req = new HttpRequestMessage(HttpMethod.Post, "https://u.y.qq.com/cgi-bin/musicu.fcg");
+        req.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+        req.Headers.TryAddWithoutValidation("User-Agent", "QQMusic 14090008(android 14)");
+        using var resp = await s_http.SendAsync(req, ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+        var data = doc.RootElement.GetProperty("req_0").GetProperty("data");
+        var dataUrl = data.GetProperty("qrcode").GetString() ?? "";
+        var identifier = data.GetProperty("qrcodeID").GetString() ?? "";
+        var comma = dataUrl.IndexOf(',');
+        if (comma < 0 || string.IsNullOrEmpty(identifier)) throw new InvalidDataException("QQ音乐登录二维码响应不完整");
+
+        var bytes = Convert.FromBase64String(dataUrl[(comma + 1)..]);
+        return new QrCodeResult(bytes, "image/png", PngQrReader.DecodeToBlockText(bytes), QrLoginType.QqMusic, identifier);
+    }
+
+    private static async Task<PollStatus> PollQqQrStatusAsync(string qrsig, CancellationToken ct)
+    {
+        var token = HashPtqrToken(qrsig);
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var url = $"https://ssl.ptlogin2.qq.com/ptqrlogin?u1=https%3A%2F%2Fgraph.qq.com%2Foauth2.0%2Flogin_jump&ptqrtoken={token}&ptredirect=0&h=1&t=1&g=1&from_ui=1&ptlang=2052&action=0-0-{ts}&js_ver=20102616&js_type=1&pt_uistyle=40&aid=716027609&daid=383&pt_3rd_aid=100497308&has_onekey=1";
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.Add("Cookie", $"qrsig={qrsig};");
+        req.Headers.Referrer = new Uri("https://xui.ptlogin2.qq.com/");
+        using var resp = await s_http.SendAsync(req, ct).ConfigureAwait(false);
+        var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var matches = SingleQuoteRegex().Matches(text);
+        if (matches.Count < 5) return new PollStatus(QrLoginEvent.Error, -1, "响应解析异常");
+
+        var code = int.TryParse(matches[0].Groups[1].Value, out var parsed) ? parsed : -1;
+        var message = matches[4].Groups[1].Value;
+        if (code == 0)
+        {
+            var redirectUrl = matches[2].Groups[1].Value;
+            var nick = matches.Count >= 6 ? matches[5].Groups[1].Value : "";
+            await ExchangeCheckSigCookiesAsync(redirectUrl, qrsig, nick, ct).ConfigureAwait(false);
+        }
+        return new PollStatus(MapQrEvent(code), code, message);
+    }
+
+    private static async Task<PollStatus> PollWeChatQrStatusAsync(string uuid, CancellationToken ct)
+    {
+        var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        using var req = new HttpRequestMessage(HttpMethod.Get, $"https://lp.open.weixin.qq.com/connect/l/qrconnect?uuid={Uri.EscapeDataString(uuid)}&_={ts}");
+        req.Headers.Referrer = new Uri("https://open.weixin.qq.com/");
+        using var resp = await s_http.SendAsync(req, ct).ConfigureAwait(false);
+        var text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        var match = WeChatStatusRegex().Match(text);
+        if (!match.Success) return new PollStatus(QrLoginEvent.Error, -1, "微信扫码状态解析异常");
+
+        var code = int.Parse(match.Groups[1].Value);
+        if (code == 405)
+        {
+            var credentialCode = match.Groups[2].Value;
+            if (string.IsNullOrEmpty(credentialCode) || !await ExchangeWeChatCodeAsync(credentialCode, ct).ConfigureAwait(false))
+            {
+                return new PollStatus(QrLoginEvent.Error, -1, "微信授权凭证交换失败");
+            }
+        }
+        return new PollStatus(MapQrEvent(code), code, GetQrStatusMessage(code));
+    }
+
+    private static QrLoginEvent MapQrEvent(int code) => code switch
+    {
+        0 or 405 => QrLoginEvent.Done,
+        67 or 404 => QrLoginEvent.Confirming,
+        65 or 402 => QrLoginEvent.Expired,
+        68 or 403 => QrLoginEvent.Refused,
+        66 or 408 => QrLoginEvent.Waiting,
+        _ => QrLoginEvent.Error
+    };
+
+    private static string GetQrStatusMessage(int code) => MapQrEvent(code) switch
+    {
+        QrLoginEvent.Done => "登录成功",
+        QrLoginEvent.Confirming => "已扫码，请在手机上确认授权...",
+        QrLoginEvent.Expired => "二维码已失效",
+        QrLoginEvent.Refused => "已取消登录",
+        QrLoginEvent.Waiting => "等待手机扫码...",
+        _ => "登录状态异常"
+    };
+
+    private static string GetSetCookieValue(HttpResponseMessage response, string name)
+    {
+        if (!response.Headers.TryGetValues("Set-Cookie", out var values)) return "";
+        foreach (var value in values)
+        {
+            var prefix = name + "=";
+            var start = value.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+            if (start < 0) continue;
+            start += prefix.Length;
+            var end = value.IndexOf(';', start);
+            return end < 0 ? value[start..] : value[start..end];
+        }
+        return "";
+    }
+
+    private static async Task TrySaveQrCodeAsync(byte[] bytes, string mimeType, CancellationToken ct)
+    {
+        try
+        {
+            var extension = mimeType == "image/jpeg" ? "jpg" : "png";
+            await File.WriteAllBytesAsync($"/tmp/qqmusic_login_qr.{extension}", bytes, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            AppLogger.Debug("LoginService", $"Unable to save temporary QR image: {ex.Message}");
+        }
+    }
+
+
 
     /// <summary>
     /// 请求 check_sig 换取最终登录 Session Cookie
@@ -270,6 +370,89 @@ public sealed partial class LoginService
         // 自动触发第二阶段：向 QQ 互联申请 OAuth2 Code 并向 QQ 音乐换取官方 musickey 完整凭据
         AppLogger.Info("LoginService", "Starting Phase 2: Automatically exchanging OAuth2 Code for full QQ Music VIP musickey...");
         await ExchangeMusicKeyByOAuthAsync(cookieDict, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> ExchangeWeChatCodeAsync(string code, CancellationToken ct)
+    {
+        var escapedCode = JsonEncodedText.Encode(code).ToString();
+        var payload = "{\"comm\":{\"ct\":11,\"cv\":14090008,\"v\":14090008,\"chid\":\"10003505\",\"tmeAppID\":\"qqmusic\",\"tmeLoginType\":1}," +
+            "\"req_0\":{\"module\":\"music.login.LoginServer\",\"method\":\"Login\",\"param\":{\"code\":\"" + escapedCode + "\",\"strAppid\":\"wx48db31d50e334801\"}}}";
+        return await ExchangeDirectCredentialAsync(payload, QrLoginType.WeChat, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> ExchangeDirectCredentialAsync(string payload, QrLoginType type, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Post, "https://u.y.qq.com/cgi-bin/musicu.fcg");
+        req.Content = new StringContent(payload, Encoding.UTF8, "application/json");
+        req.Headers.TryAddWithoutValidation("User-Agent", "QQMusic 14090008(android 14)");
+        using var resp = await s_http.SendAsync(req, ct).ConfigureAwait(false);
+        var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        resp.EnsureSuccessStatusCode();
+
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("req_0", out var login) ||
+            !login.TryGetProperty("code", out var codeElement) ||
+            codeElement.GetInt32() != 0 ||
+            !login.TryGetProperty("data", out var data))
+        {
+            AppLogger.Error("LoginService", $"{type} credential exchange rejected: {json}");
+            return false;
+        }
+
+        return await SaveCredentialAsync(data, type, ct).ConfigureAwait(false);
+    }
+
+    private static async Task<bool> SaveCredentialAsync(JsonElement data, QrLoginType type, CancellationToken ct)
+    {
+        var musicId = GetJsonString(data, "str_musicid");
+        if (string.IsNullOrEmpty(musicId)) musicId = GetJsonString(data, "musicid");
+        var musicKey = GetJsonString(data, "musickey");
+        if (string.IsNullOrEmpty(musicId) || string.IsNullOrEmpty(musicKey)) return false;
+
+        var cookies = new Dictionary<string, string>
+        {
+            ["musicid"] = musicId,
+            ["uin"] = musicId,
+            ["qqmusic_uin"] = musicId,
+            ["qqmusic_key"] = musicKey,
+            ["qm_keyst"] = musicKey,
+            ["qqmusic_version"] = "17",
+            ["qqmusic_miniversion"] = "70",
+            ["tmeLoginType"] = type == QrLoginType.WeChat ? "1" : "6"
+        };
+
+        AddCredentialCookie(data, cookies, "openid", type == QrLoginType.WeChat ? "psrf_wxopenid" : "openid");
+        AddCredentialCookie(data, cookies, "access_token", type == QrLoginType.WeChat ? "psrf_wx_access_token" : "access_token");
+        AddCredentialCookie(data, cookies, "refresh_token", "refresh_token");
+        AddCredentialCookie(data, cookies, "refresh_key", "refresh_key");
+        AddCredentialCookie(data, cookies, "unionid", type == QrLoginType.WeChat ? "psrf_wxunionid" : "unionid");
+
+        UserSession.Current.Uin = musicId;
+        UserSession.Current.Nick = GetJsonString(data, "nick");
+        if (string.IsNullOrWhiteSpace(UserSession.Current.Nick)) UserSession.Current.Nick = $"用户_{musicId}";
+        UserSession.Current.MusicKey = musicKey;
+        UserSession.Current.Cookies = cookies;
+        UserSession.Current.Save();
+        await QqMusicApi.RefreshCurrentUserProfileAsync(ct).ConfigureAwait(false);
+        AppLogger.Info("LoginService", $"{GetLoginTypeName(type)} login credentials stored for musicid={musicId}");
+        return true;
+    }
+
+    private static void AddCredentialCookie(JsonElement data, Dictionary<string, string> cookies, string property, string cookieName)
+    {
+        var value = GetJsonString(data, property);
+        if (!string.IsNullOrEmpty(value)) cookies[cookieName] = value;
+    }
+
+    private static string GetJsonString(JsonElement element, string property)
+    {
+        if (!element.TryGetProperty(property, out var value)) return "";
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? "",
+            JsonValueKind.Number => value.GetRawText(),
+            _ => ""
+        };
     }
 
     /// <summary>
@@ -421,6 +604,7 @@ public sealed partial class LoginService
                     UserSession.Current.IsVip = true;
                     UserSession.Current.Cookies = cookieDict;
                     UserSession.Current.Save();
+                    await QqMusicApi.RefreshCurrentUserProfileAsync(ct).ConfigureAwait(false);
                     AppLogger.Info("LoginService", $"Full QQ Music VIP cookies successfully stored to UserSession! Total cookies: {cookieDict.Count}");
                     return true;
                 }
@@ -507,12 +691,14 @@ public sealed partial class LoginService
         return 2147483647 & e;
     }
 
-    [GeneratedRegex(@"qrsig=([^;]+)")]
-    private static partial Regex QrSigRegex();
-
     [GeneratedRegex(@"'([^']*)'")]
     private static partial Regex SingleQuoteRegex();
 
+    [GeneratedRegex("uuid=([^\\\"]+)")]
+    private static partial Regex WeChatUuidRegex();
+
+    [GeneratedRegex(@"window\.wx_errcode=(\d+);window\.wx_code='([^']*)'")]
+    private static partial Regex WeChatStatusRegex();
     [GeneratedRegex(@"[?&]uin=([^&]+)")]
     private static partial Regex UinQueryRegex();
 

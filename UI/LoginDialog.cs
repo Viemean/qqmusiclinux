@@ -16,6 +16,7 @@ public sealed class LoginDialog : Dialog
     private readonly Action _onLoginSuccess;
     private readonly CancellationTokenSource _cts = new();
     private LoginHttpServer? _httpServer;
+    private LoginService.QrLoginType _loginType = LoginService.QrLoginType.Qq;
 
     private static Scheme TransparentDialogScheme { get; } = new Scheme
     {
@@ -41,15 +42,16 @@ public sealed class LoginDialog : Dialog
     private readonly View _qrContainer;
     private readonly Label _qrStatusLabel;
     private readonly Label _qrTipLabel;
+    private readonly Label _providerLabel;
     private readonly ListView _qrView;
 
     public LoginDialog(Action onLoginSuccess)
     {
         _onLoginSuccess = onLoginSuccess;
 
-        Title = "用户登录";
-        Width = 68;
-        Height = 28;
+        Title = "QQ音乐账号登录";
+        Width = 74;
+        Height = 32;
         X = Pos.Center();
         Y = Pos.Center();
         SetScheme(TransparentDialogScheme);
@@ -69,6 +71,34 @@ public sealed class LoginDialog : Dialog
             Y = 0
         };
 
+        var qqBtn = new Button
+        {
+            Text = "QQ (1)",
+            X = 2,
+            Y = 2
+        };
+
+        var weChatBtn = new Button
+        {
+            Text = "微信 (2)",
+            X = Pos.Right(qqBtn) + 2,
+            Y = 2
+        };
+
+        var qqMusicBtn = new Button
+        {
+            Text = "QQ音乐 (3)",
+            X = Pos.Right(weChatBtn) + 2,
+            Y = 2
+        };
+
+        _providerLabel = new Label
+        {
+            Text = "当前方式: QQ（请使用手机 QQ 扫码）",
+            X = Pos.Right(qqMusicBtn) + 2,
+            Y = 2
+        };
+
         var logoutBtn = new Button
         {
             Text = "退出账号",
@@ -83,13 +113,13 @@ public sealed class LoginDialog : Dialog
             Y = 0
         };
 
-        Add(webTabBtn, qrTabBtn, logoutBtn, closeBtn);
+        Add(webTabBtn, qrTabBtn, logoutBtn, closeBtn, qqBtn, weChatBtn, qqMusicBtn, _providerLabel);
 
         // ==================== 1. 网页登录容器 (默认激活) ====================
         _webContainer = new View
         {
             X = 0,
-            Y = 2,
+            Y = 4,
             Width = Dim.Fill(),
             Height = Dim.Fill(),
             Visible = true
@@ -165,7 +195,7 @@ public sealed class LoginDialog : Dialog
         _qrContainer = new View
         {
             X = 0,
-            Y = 2,
+            Y = 4,
             Width = Dim.Fill(),
             Height = Dim.Fill(),
             Visible = false
@@ -221,6 +251,29 @@ public sealed class LoginDialog : Dialog
         webTabBtn.Accepting += (s, e) => SwitchToWebTab();
         qrTabBtn.Accepting += (s, e) => SwitchToQrTab();
 
+        void SelectProvider(LoginService.QrLoginType type)
+        {
+            if (_loginType == type) return;
+            _loginType = type;
+            var name = LoginService.GetLoginTypeName(type);
+            var scanner = type switch
+            {
+                LoginService.QrLoginType.Qq => "手机 QQ",
+                LoginService.QrLoginType.WeChat => "微信",
+                _ => "QQ音乐 APP"
+            };
+            _providerLabel.Text = $"当前方式: {name}（请使用{scanner}扫码）";
+            _httpServer?.UpdateLoginType(name);
+            _webStatusLabel.Text = $"状态: 正在切换到{name}登录...";
+            _qrStatusLabel.Text = $"状态: 正在切换到{name}登录...";
+            RequestRefresh();
+            SetNeedsDraw();
+        }
+
+        qqBtn.Accepting += (s, e) => SelectProvider(LoginService.QrLoginType.Qq);
+        weChatBtn.Accepting += (s, e) => SelectProvider(LoginService.QrLoginType.WeChat);
+        qqMusicBtn.Accepting += (s, e) => SelectProvider(LoginService.QrLoginType.QqMusic);
+
         logoutBtn.Accepting += (s, e) =>
         {
             LoginService.Logout();
@@ -252,6 +305,24 @@ public sealed class LoginDialog : Dialog
             {
                 k.Handled = true;
                 SwitchToQrTab();
+                return;
+            }
+            if (c == '1')
+            {
+                k.Handled = true;
+                SelectProvider(LoginService.QrLoginType.Qq);
+                return;
+            }
+            if (c == '2')
+            {
+                k.Handled = true;
+                SelectProvider(LoginService.QrLoginType.WeChat);
+                return;
+            }
+            if (c == '3')
+            {
+                k.Handled = true;
+                SelectProvider(LoginService.QrLoginType.QqMusic);
                 return;
             }
             if (c == 'R')
@@ -308,7 +379,9 @@ public sealed class LoginDialog : Dialog
                 });
                 _httpServer?.UpdateStatus("正在获取二维码...");
 
-                var qr = await LoginService.FetchQrCodeAsync(_cts.Token);
+                var selectedType = _loginType;
+                _httpServer?.UpdateLoginType(LoginService.GetLoginTypeName(selectedType));
+                var qr = await LoginService.FetchQrCodeAsync(selectedType, _cts.Token);
                 if (qr == null)
                 {
                     Application.Invoke(() =>
@@ -325,32 +398,60 @@ public sealed class LoginDialog : Dialog
                     continue;
                 }
 
-                _httpServer?.UpdateQrCode(qr.PngBytes);
-                _httpServer?.UpdateStatus("等待手机扫码...");
+                _httpServer?.UpdateQrCode(qr.ImageBytes, qr.MimeType);
+                _httpServer?.UpdateStatus($"等待使用{LoginService.GetLoginTypeName(selectedType)}扫码...");
 
                 Application.Invoke(() =>
                 {
-                    _webStatusLabel.Text = "状态: 等待手机扫码...";
-                    _qrStatusLabel.Text = "状态: 等待手机扫码...";
+                    _webStatusLabel.Text = $"状态: 等待使用{LoginService.GetLoginTypeName(selectedType)}扫码...";
+                    _qrStatusLabel.Text = $"状态: 等待使用{LoginService.GetLoginTypeName(selectedType)}扫码...";
                     _qrView.SetSource(new ObservableCollection<string>(qr.AsciiLines));
-                    _qrTipLabel.Text = $"手机扫码或浏览器打开: {_httpServer?.LanUrl} (按 R 刷新)";
+                    _qrTipLabel.Text = $"使用{LoginService.GetLoginTypeName(selectedType)}扫码，或浏览器打开: {_httpServer?.LanUrl} (按 R 刷新)";
                 });
 
-                // 轮询该二维码状态
-                while (!_cts.Token.IsCancellationRequested && !_refreshRequested)
+                if (selectedType == LoginService.QrLoginType.QqMusic)
                 {
-                    try { await Task.Delay(2000, _cts.Token); } catch { break; }
-                    if (_refreshRequested) break;
+                    var status = await LoginService.WaitForQqMusicQrLoginAsync(qr, next =>
+                    {
+                        _httpServer?.UpdateStatus(next.Message);
+                        Application.Invoke(() =>
+                        {
+                            _webStatusLabel.Text = $"状态: {next.Message}";
+                            _qrStatusLabel.Text = $"状态: {next.Message}";
+                        });
+                    }, _cts.Token);
 
-                    var status = await LoginService.PollQrStatusAsync(qr.QrSig, qr.PtqrToken, _cts.Token);
+                    if (status.Event == LoginService.QrLoginEvent.Done)
+                    {
+                        _httpServer?.UpdateStatus($"登录成功 [{UserSession.Current.Nick}]", isSuccess: true, nick: UserSession.Current.Nick);
+                        Application.Invoke(() =>
+                        {
+                            _onLoginSuccess?.Invoke();
+                            CloseSelf();
+                        });
+                        return;
+                    }
+                    if (status.Event == LoginService.QrLoginEvent.Expired) continue;
+                    while (!_cts.Token.IsCancellationRequested && !_refreshRequested && selectedType == _loginType)
+                    {
+                        try { await Task.Delay(500, _cts.Token); } catch { break; }
+                    }
+                    continue;
+                }
 
-                    if (status.Code == 0) // 成功
+                while (!_cts.Token.IsCancellationRequested && !_refreshRequested && selectedType == _loginType)
+                {
+                    try { await Task.Delay(1500, _cts.Token); } catch { break; }
+                    if (_refreshRequested || selectedType != _loginType) break;
+
+                    var status = await LoginService.PollQrStatusAsync(qr, _cts.Token);
+                    if (status.Event == LoginService.QrLoginEvent.Done)
                     {
                         _httpServer?.UpdateStatus($"登录成功 [{UserSession.Current.Nick}]", isSuccess: true, nick: UserSession.Current.Nick);
                         Application.Invoke(() =>
                         {
                             _webStatusLabel.Text = $"状态: 登录成功 [{UserSession.Current.Nick}]";
-                            _qrStatusLabel.Text = $"状态[0]: 登录成功 [{UserSession.Current.Nick}]";
+                            _qrStatusLabel.Text = $"状态: 登录成功 [{UserSession.Current.Nick}]";
                             _onLoginSuccess?.Invoke();
                         });
                         try { await Task.Delay(1500, _cts.Token); } catch { }
@@ -358,35 +459,25 @@ public sealed class LoginDialog : Dialog
                         Application.Invoke(CloseSelf);
                         return;
                     }
-                    else if (status.Code == 67) // 认证中
-                    {
-                        _httpServer?.UpdateStatus("已扫码，请在手机上确认授权...");
-                        Application.Invoke(() =>
-                        {
-                            _webStatusLabel.Text = "状态: 已扫码，请在手机上确认授权...";
-                            _qrStatusLabel.Text = "状态[67]: 已扫码，请在手机上确认授权...";
-                        });
-                    }
-                    else if (status.Code == 65) // 失效：自动重启外循环换取新二维码
+
+                    if (status.Event == LoginService.QrLoginEvent.Expired)
                     {
                         _httpServer?.UpdateStatus("二维码已失效，正在自动换新...");
                         Application.Invoke(() =>
                         {
-                            _webStatusLabel.Text = "状态[65]: 二维码已失效，正在自动换新...";
-                            _qrStatusLabel.Text = "状态[65]: 二维码已失效，正在自动换新...";
+                            _webStatusLabel.Text = "状态: 二维码已失效，正在自动换新...";
+                            _qrStatusLabel.Text = "状态: 二维码已失效，正在自动换新...";
                         });
                         try { await Task.Delay(1000, _cts.Token); } catch { }
                         break;
                     }
-                    else
+
+                    _httpServer?.UpdateStatus(status.Message);
+                    Application.Invoke(() =>
                     {
-                        _httpServer?.UpdateStatus(status.Message ?? "等待扫码...");
-                        Application.Invoke(() =>
-                        {
-                            _webStatusLabel.Text = $"状态[{status.Code}]: {status.Message}";
-                            _qrStatusLabel.Text = $"状态[{status.Code}]: {status.Message}";
-                        });
-                    }
+                        _webStatusLabel.Text = $"状态: {status.Message}";
+                        _qrStatusLabel.Text = $"状态: {status.Message}";
+                    });
                 }
             }
         }, _cts.Token);

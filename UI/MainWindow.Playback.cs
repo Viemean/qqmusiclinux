@@ -524,7 +524,7 @@ public sealed partial class MainWindow
         // AOD 后台息屏模式：仅在后台同步 D-Bus 位置与防抖持久化，不触发前台界面控件重绘
         if (_isAodMode)
         {
-            _mprisService.UpdatePosition(currentSec);
+            _mprisService.UpdatePosition(currentSec, _activeSong.Duration);
             UserSession.Current.LastPlaybackPositionSeconds = currentSec;
             UserSession.Current.LastPlayedSong = _activeSong;
             if (Environment.TickCount64 - _lastProgressSaveTick > 5000)
@@ -540,7 +540,7 @@ public sealed partial class MainWindow
         var progressPercent = _activeSong.Duration > 0 ? Math.Clamp(currentSec / _activeSong.Duration, 0, 1) : 0;
 
         _controlBar.UpdateProgress(cur, total, progressPercent);
-        _mprisService.UpdatePosition(currentSec);
+        _mprisService.UpdatePosition(currentSec, _activeSong.Duration);
 
         UserSession.Current.LastPlaybackPositionSeconds = currentSec;
         UserSession.Current.LastPlayedSong = _activeSong;
@@ -613,14 +613,10 @@ public sealed partial class MainWindow
             return;
         }
 
-        // 循环切换音质：Web 端跳过 Hi-Res（Standard -> HQ -> SQ -> Standard）
-        var nextTier = _preferredQualityTier switch
-        {
-            AudioQualityTier.Standard => AudioQualityTier.HQ,
-            AudioQualityTier.HQ => AudioQualityTier.SQ,
-            AudioQualityTier.SQ => allowHiRes ? AudioQualityTier.HiRes : AudioQualityTier.Standard,
-            _ => AudioQualityTier.Standard
-        };
+        // Web 端使用单按钮循环全部支持的在线音质。
+        var currentIndex = AudioQualityHelper.GetSelectionIndex(_preferredQualityTier);
+        if (currentIndex < 0) currentIndex = 0;
+        var nextTier = AudioQualityHelper.SelectionOrder[(currentIndex + 1) % AudioQualityHelper.SelectionOrder.Count];
         await SwitchQualityTierAsync(nextTier);
     }
 

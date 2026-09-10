@@ -447,20 +447,25 @@ public class OfficialApiTests
 
     #region 8. 账号网关模块 - 二维码登录
 
-    [Fact]
-    public async Task FetchQrCodeAsync_OfficialPtlogin_ReturnsValidQrData()
+    [Theory]
+    [InlineData(LoginService.QrLoginType.Qq, "image/png")]
+    [InlineData(LoginService.QrLoginType.WeChat, "image/jpeg")]
+    [InlineData(LoginService.QrLoginType.QqMusic, "image/png")]
+    public async Task FetchQrCodeAsync_OfficialGateways_ReturnValidQrData(LoginService.QrLoginType type, string mimeType)
     {
         if (!IsOnlineTestEnabled()) return;
 
-        _output.WriteLine("[模块: 登录网关] 正在测试 LoginService.FetchQrCodeAsync (腾讯 ptlogin2 网关)...");
-        var qr = await LoginService.FetchQrCodeAsync();
+        _output.WriteLine($"[模块: 登录网关] 正在获取 {LoginService.GetLoginTypeName(type)} 登录二维码...");
+        var qr = await LoginService.FetchQrCodeAsync(type);
 
         Assert.NotNull(qr);
-        Assert.NotEmpty(qr.PngBytes);
-        Assert.False(string.IsNullOrEmpty(qr.QrSig));
-        Assert.True(qr.PtqrToken != 0);
+        Assert.NotEmpty(qr.ImageBytes);
+        Assert.Equal(mimeType, qr.MimeType);
+        Assert.Equal(type, qr.Type);
+        Assert.False(string.IsNullOrEmpty(qr.Identifier));
+        Assert.DoesNotContain(qr.AsciiLines, line => line.StartsWith("二维码渲染失败", StringComparison.Ordinal));
 
-        _output.WriteLine($"[模块: 登录网关] 成功拉取登录二维码，图像大小: {qr.PngBytes.Length} bytes, PtqrToken: {qr.PtqrToken}");
+        _output.WriteLine($"[模块: 登录网关] {LoginService.GetLoginTypeName(type)} 二维码大小: {qr.ImageBytes.Length} bytes");
     }
 
     #endregion

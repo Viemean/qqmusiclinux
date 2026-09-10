@@ -29,7 +29,11 @@ public sealed partial class MainWindow
         if (UserSession.Current.IsLoggedIn)
         {
             var name = string.IsNullOrEmpty(UserSession.Current.Nick) ? UserSession.Current.Uin : UserSession.Current.Nick;
-            return $"[U] 账号: {name}";
+            var vip = UserSession.Current.IsVip
+                ? UserSession.Current.VipLevel > 0 ? $" 绿钻LV{UserSession.Current.VipLevel}" : " 绿钻"
+                : "";
+            var musicLevel = UserSession.Current.MusicLevel > 0 ? $" 乐力{UserSession.Current.MusicLevel}" : "";
+            return $"[U] {name}{vip}{musicLevel}";
         }
         return "[U] 登录";
     }
