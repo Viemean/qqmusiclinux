@@ -32,19 +32,19 @@ public sealed class LoginDialog : Dialog
     };
 
     /// <summary>
-    /// 终端二维码专用高对比度实心深色背景方案（防止透明终端导致扫码对比度不足）
+    /// 终端二维码标准高对比度白底黑码配色方案（符合二维码国际标准光学极性，防止反色或全黑背景导致摄像头无法识别）
     /// </summary>
     private static Scheme QrCodeScheme { get; } = new Scheme
     {
-        Normal    = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
-        Focus     = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
-        HotNormal = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
-        HotFocus  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
-        Disabled  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
-        Highlight = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
-        Active    = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
-        ReadOnly  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
-        Editable  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black)
+        Normal    = new Terminal.Gui.Drawing.Attribute(Color.Black, Color.White),
+        Focus     = new Terminal.Gui.Drawing.Attribute(Color.Black, Color.White),
+        HotNormal = new Terminal.Gui.Drawing.Attribute(Color.Black, Color.White),
+        HotFocus  = new Terminal.Gui.Drawing.Attribute(Color.Black, Color.White),
+        Disabled  = new Terminal.Gui.Drawing.Attribute(Color.Black, Color.White),
+        Highlight = new Terminal.Gui.Drawing.Attribute(Color.Black, Color.White),
+        Active    = new Terminal.Gui.Drawing.Attribute(Color.Black, Color.White),
+        ReadOnly  = new Terminal.Gui.Drawing.Attribute(Color.Black, Color.White),
+        Editable  = new Terminal.Gui.Drawing.Attribute(Color.Black, Color.White)
     };
 
     // 1. 网页登录容器 (默认首选)
@@ -240,7 +240,7 @@ public sealed class LoginDialog : Dialog
         {
             Text = "提示: 手机扫码授权后将自动同步",
             X = Pos.Center(),
-            Y = 24,
+            Y = Pos.Bottom(_qrView) + 1,
             Width = Dim.Fill(2),
             TextAlignment = Alignment.Center
         };
@@ -417,6 +417,11 @@ public sealed class LoginDialog : Dialog
                 {
                     _webStatusLabel.Text = $"状态: 等待使用{LoginService.GetLoginTypeName(selectedType)}扫码...";
                     _qrStatusLabel.Text = $"状态: 等待使用{LoginService.GetLoginTypeName(selectedType)}扫码...";
+                    if (qr.AsciiLines.Count > 0)
+                    {
+                        _qrView.Width = qr.AsciiLines[0].Length;
+                        _qrView.Height = qr.AsciiLines.Count;
+                    }
                     _qrView.SetSource(new ObservableCollection<string>(qr.AsciiLines));
                     _qrTipLabel.Text = $"使用{LoginService.GetLoginTypeName(selectedType)}扫码，或浏览器打开: {_httpServer?.LanUrl} (按 R 刷新)";
                 });
