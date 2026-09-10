@@ -24,6 +24,10 @@ public static class QafpNativeRunner
         get
         {
             EnsureInitialized();
+            if (RuntimeInformation.ProcessArchitecture != Architecture.Arm64 && string.IsNullOrEmpty(_cachedQemuPath))
+            {
+                return false;
+            }
             return !string.IsNullOrEmpty(_cachedRunnerPath) &&
                    !string.IsNullOrEmpty(_cachedSysrootPath) &&
                    !string.IsNullOrEmpty(_cachedModelPath);
@@ -74,11 +78,20 @@ public static class QafpNativeRunner
         {
             if (_initialized) return;
 
-            // 1. 查找 qemu-aarch64-static (如果在 x86_64/其它非 aarch64 平台)
-            if (RuntimeInformation.ProcessArchitecture != Architecture.Arm64)
+            var isArm64 = RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
+
+            // 1. 检查非 ARM64 平台的 QEMU 模拟器依赖 (x86_64, x86, arm32 等非 aarch64 环境)
+            if (!isArm64)
             {
                 _cachedQemuPath = FindExecutable("qemu-aarch64-static") ??
                                   FindExecutable("qemu-aarch64");
+
+                if (string.IsNullOrEmpty(_cachedQemuPath))
+                {
+                    AppLogger.Force("QafpNativeRunner", "非 ARM64 平台未检测到 qemu-aarch64-static / qemu-aarch64，关闭 QQ 音乐优图识曲接口");
+                    _initialized = true;
+                    return;
+                }
             }
 
             // 2. 候选路径
@@ -116,15 +129,106 @@ public static class QafpNativeRunner
 
                 if (File.Exists(runner) && Directory.Exists(sysroot) && File.Exists(model))
                 {
+                    // 检查 ARM64 平台的引导环境 (需要宿主 /system/bin/linker64 或自带 sysroot linker64)
+                    if (isArm64)
+                    {
+                        var internalLinker = Path.Combine(sysroot, "system", "bin", "linker64");
+                        if (!File.Exists("/system/bin/linker64") && !File.Exists(internalLinker))
+                        {
+                            AppLogger.Force("QafpNativeRunner", $"ARM64 环境缺少 /system/bin/linker64 且自带内部 linker64 不存在: {dir}");
+                            continue;
+                        }
+                    }
+
+                    // 执行真实环境执行能力探活自检
+                    if (!ProbeRunner(runner, sysroot, isArm64, _cachedQemuPath))
+                    {
+                        AppLogger.Force("QafpNativeRunner", $"QAFP 运行时环境探活自检失败 (系统不支持执行或依赖缺失): {dir}");
+                        continue;
+                    }
+
                     _cachedRunnerPath = runner;
                     _cachedSysrootPath = sysroot;
                     _cachedModelPath = model;
-                    AppLogger.Force("QafpNativeRunner", $"发现官方 QAFP 运行时: {dir}");
+                    AppLogger.Force("QafpNativeRunner", $"发现并自检通过官方 QAFP 运行时: {dir}");
                     break;
                 }
             }
 
+            if (string.IsNullOrEmpty(_cachedRunnerPath))
+            {
+                AppLogger.Force("QafpNativeRunner", "未找到可运行的官方 QAFP 环境，关闭 QQ 音乐优图识曲接口");
+            }
+
             _initialized = true;
+        }
+    }
+
+    private static bool ProbeRunner(string runnerPath, string sysrootPath, bool isArm64, string? qemuPath)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            if (isArm64)
+            {
+                var internalLinker = Path.Combine(sysrootPath, "system", "bin", "linker64");
+                if (!File.Exists("/system/bin/linker64") && File.Exists(internalLinker))
+                {
+                    psi.FileName = internalLinker;
+                    psi.Environment["LD_LIBRARY_PATH"] = Path.Combine(sysrootPath, "system", "lib64");
+                    psi.ArgumentList.Add(runnerPath);
+                }
+                else
+                {
+                    psi.FileName = runnerPath;
+                }
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(qemuPath)) return false;
+                psi.FileName = qemuPath;
+                psi.ArgumentList.Add("-L");
+                psi.ArgumentList.Add(sysrootPath);
+                psi.ArgumentList.Add(runnerPath);
+            }
+
+            psi.ArgumentList.Add("--probe");
+
+            using var proc = Process.Start(psi);
+            if (proc == null) return false;
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            if (!proc.WaitForExit(2000))
+            {
+                proc.Kill(true);
+                return false;
+            }
+
+            var stdout = stdoutTask.GetAwaiter().GetResult();
+            if (proc.ExitCode == 0 && stdout.Contains("QAFP_OK"))
+            {
+                return true;
+            }
+
+            // 兼容老版本 runner 退出码 1 且输出 Usage 视为可执行
+            if (proc.ExitCode == 1)
+            {
+                return true;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            AppLogger.Force("QafpNativeRunner", $"QAFP 探活自检异常: {ex.Message}");
+            return false;
         }
     }
 

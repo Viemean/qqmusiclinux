@@ -88,9 +88,26 @@ int real_main(int argc, char** argv) {
         argv++;
     }
 
+    if (argc < 2) {
+        const char* usage = "Usage:\n  qafp_runner <model_path> <pcm_path|-> <out_feat_path|->\n  qafp_runner --server <model_path>\n  qafp_runner --probe\n";
+        write(2, usage, 107);
+        exit(1);
+    }
+
+    if (str_eq(argv[1], "--probe") == 0) {
+        void* h = dlopen("libMusicWrapper.so", 2);
+        if (!h) h = dlopen("/system/lib64/libMusicWrapper.so", 2);
+        if (!h) {
+            write(2, "dlopen failed\n", 14);
+            exit(2);
+        }
+        write(1, "QAFP_OK\n", 8);
+        exit(0);
+    }
+
     if (argc < 3) {
-        const char* usage = "Usage:\n  qafp_runner <model_path> <pcm_path|-> <out_feat_path|->\n  qafp_runner --server <model_path>\n";
-        write(2, usage, 88);
+        const char* usage = "Usage:\n  qafp_runner <model_path> <pcm_path|-> <out_feat_path|->\n  qafp_runner --server <model_path>\n  qafp_runner --probe\n";
+        write(2, usage, 107);
         exit(1);
     }
 
