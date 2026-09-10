@@ -139,6 +139,29 @@ class ElectronMusicPlayer {
       }
     });
 
+    // 页面卸载或标签页关闭时，停止本地音频播放并安全上报 client_close 状态
+    const onPageClose = () => {
+      try {
+        if (this.audioElement) {
+          this.audioElement.pause();
+          this.audioElement.src = '';
+        }
+        const payload = JSON.stringify({ action: 'client_close' });
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon('/api/action', payload);
+        } else {
+          fetch('/api/action', {
+            method: 'POST',
+            body: payload,
+            keepalive: true
+          }).catch(() => {});
+        }
+      } catch {}
+    };
+
+    window.addEventListener('beforeunload', onPageClose);
+    window.addEventListener('pagehide', onPageClose);
+
     // 封面加载完成时更新背景色
     this.albumCover.addEventListener('load', () => {
       this.stageView.classList.remove('no-cover');

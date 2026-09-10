@@ -1175,4 +1175,29 @@ public sealed partial class MainWindow : Window
             });
         }
     }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            try
+            {
+                DisableWebAodWatchdog();
+                if (_standaloneWebServer != null)
+                {
+                    if (_standaloneWebServer.IsRunning)
+                    {
+                        _standaloneWebServer.Stop();
+                    }
+                    _standaloneWebServer.Dispose();
+                    _standaloneWebServer = null;
+                }
+            }
+            catch {}
+
+            try { _mprisService.Dispose(); } catch {}
+            try { _player.Dispose(); } catch {}
+        }
+        base.Dispose(disposing);
+    }
 }

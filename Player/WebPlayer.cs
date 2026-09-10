@@ -50,6 +50,17 @@ public sealed class WebPlayer : IPlayer
         };
         _server.SeekRequested += sec => _ = SeekAsync(sec);
         _server.VolumeRequested += vol => SetVolume(vol);
+        _server.AllClientsDisconnected += () =>
+        {
+            lock (_lock)
+            {
+                if (IsPlaying)
+                {
+                    AppLogger.Info("WebPlayer", "All web clients disconnected. Automatically pausing WebPlayer.");
+                    _ = TogglePauseAsync();
+                }
+            }
+        };
         _server.ProgressReported += (pos, dur) =>
         {
             CurrentPositionSeconds = pos;

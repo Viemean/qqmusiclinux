@@ -180,6 +180,25 @@ public sealed partial class MainWindow
                 }
             });
         };
+        server.AllClientsDisconnected += () => Application.Invoke(async () =>
+        {
+            if (_isTuiAudioDisabled)
+            {
+                if (_isWebPlaying)
+                {
+                    _isWebPlaying = false;
+                    StopWebVirtualTicker();
+                    _controlBar.UpdateStatus("Web 浏览器已全部关闭，已自动暂停播放");
+                    AppLogger.Info("MainWindow", "All web clients disconnected in Web-only mode. Playback paused.");
+                }
+            }
+            else if (_player.IsPlaying)
+            {
+                await TogglePlayOrPauseAsync();
+                _controlBar.UpdateStatus("Web 浏览器已全部关闭，已自动暂停播放");
+                AppLogger.Info("MainWindow", "All web clients disconnected. Playback paused.");
+            }
+        });
     }
 
     private bool RestartStandaloneWebServer(int port)
@@ -205,8 +224,9 @@ public sealed partial class MainWindow
 
             if (_isTuiAudioDisabled)
             {
-                // 先恢复 TUI 音频播放，此时 _standaloneWebServer 仍可提供进度与 URL
-                _ = SetTuiAudioDisabledAsync(false);
+                _isTuiAudioDisabled = false;
+                _isWebPlaying = false;
+                StopWebVirtualTicker();
             }
 
             if (_standaloneWebServer != null)

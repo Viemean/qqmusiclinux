@@ -211,6 +211,18 @@ public static partial class Program
 
                     try
                     {
+                        mainWindow.Dispose();
+                    }
+                    catch { }
+
+                    try
+                    {
+                        player.Dispose();
+                    }
+                    catch { }
+
+                    try
+                    {
                         Application.Shutdown();
                     }
                     catch

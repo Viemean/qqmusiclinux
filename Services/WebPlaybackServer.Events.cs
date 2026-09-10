@@ -69,11 +69,29 @@ public sealed partial class WebPlaybackServer
         finally
         {
             try { heartbeatCts.Cancel(); } catch {}
+            int remainingClients;
             lock (_sseLock)
             {
                 _sseClients.Remove(sseClient);
+                remainingClients = _sseClients.Count;
             }
             sseClient.Dispose();
+
+            if (remainingClients == 0 && _listener != null)
+            {
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(2000).ConfigureAwait(false);
+                    lock (_sseLock)
+                    {
+                        if (_sseClients.Count == 0 && _listener != null)
+                        {
+                            AppLogger.Info("WebPlaybackServer", "All web clients disconnected.");
+                            AllClientsDisconnected?.Invoke();
+                        }
+                    }
+                });
+            }
         }
     }
 
@@ -88,6 +106,10 @@ public sealed partial class WebPlaybackServer
                 var action = actionProp.GetString();
                 switch (action)
                 {
+                    case "client_close":
+                        AppLogger.Info("WebPlaybackServer", "Web client page closed (client_close reported).");
+                        AllClientsDisconnected?.Invoke();
+                        break;
                     case "next":
                         NextRequested?.Invoke();
                         break;

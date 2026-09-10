@@ -97,6 +97,7 @@ public sealed partial class WebPlaybackServer : IDisposable
     public event Action<int>? VolumeRequested;
     public event Action<double, double>? ProgressReported;
     public event Action<bool>? AudioOutputToggled;
+    public event Action? AllClientsDisconnected;
 
     public bool Start(int preferredPort = 9999, bool initialAudioOutput = true)
     {
@@ -637,6 +638,13 @@ public sealed partial class WebPlaybackServer : IDisposable
         lock (_lock)
         {
             if (_listener == null) return;
+            try
+            {
+                IsPlaying = false;
+                BroadcastState("stop");
+            }
+            catch {}
+
             try
             {
                 _cts?.Cancel();

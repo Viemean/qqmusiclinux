@@ -777,6 +777,13 @@ public sealed partial class MainWindow
             Application.Invoke(() =>
             {
                 UserSession.Current.Save();
+                try
+                {
+                    _standaloneWebServer?.Stop();
+                    _standaloneWebServer?.Dispose();
+                    _standaloneWebServer = null;
+                }
+                catch {}
                 _player.Dispose();
                 _mprisService.Dispose();
                 Application.RequestStop();
