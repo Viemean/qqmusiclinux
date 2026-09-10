@@ -67,7 +67,27 @@ static int str_eq(const char* a, const char* b) {
     return *(const unsigned char*)a - *(const unsigned char*)b;
 }
 
+static int str_ends_with(const char* s, const char* sub) {
+    size_t slen = 0, sublen = 0;
+    while (s[slen]) slen++;
+    while (sub[sublen]) sublen++;
+    if (sublen > slen) return 0;
+    const char* p1 = s + (slen - sublen);
+    const char* p2 = sub;
+    while (*p1 && *p2) {
+        if (*p1 != *p2) return 0;
+        p1++; p2++;
+    }
+    return 1;
+}
+
 int real_main(int argc, char** argv) {
+    // 自适应 Bionic linker64 显式引导模式：若通过 linker64 启动，剥离 linker64 占用的首个参数
+    if (argc > 1 && str_ends_with(argv[1], "qafp_runner")) {
+        argc--;
+        argv++;
+    }
+
     if (argc < 3) {
         const char* usage = "Usage:\n  qafp_runner <model_path> <pcm_path|-> <out_feat_path|->\n  qafp_runner --server <model_path>\n";
         write(2, usage, 88);
@@ -77,7 +97,8 @@ int real_main(int argc, char** argv) {
     int is_server = (str_eq(argv[1], "--server") == 0);
     const char* model_path = is_server ? argv[2] : argv[1];
 
-    void* h = dlopen("/system/lib64/libMusicWrapper.so", 2);
+    void* h = dlopen("libMusicWrapper.so", 2);
+    if (!h) h = dlopen("/system/lib64/libMusicWrapper.so", 2);
     if (!h) {
         write(2, "dlopen failed\n", 14);
         exit(2);

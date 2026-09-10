@@ -162,7 +162,18 @@ public static class QafpNativeRunner
             }
             else
             {
-                psi.FileName = _cachedRunnerPath!;
+                // ARM64 环境：若宿主无 /system 符号链接且存在自带解释器，直接利用自带 Bionic linker64 裸机引导
+                var internalLinker = Path.Combine(_cachedSysrootPath!, "system", "bin", "linker64");
+                if (!File.Exists("/system/bin/linker64") && File.Exists(internalLinker))
+                {
+                    psi.FileName = internalLinker;
+                    psi.Environment["LD_LIBRARY_PATH"] = Path.Combine(_cachedSysrootPath!, "system", "lib64");
+                    psi.ArgumentList.Add(_cachedRunnerPath!);
+                }
+                else
+                {
+                    psi.FileName = _cachedRunnerPath!;
+                }
                 psi.ArgumentList.Add(_cachedModelPath!);
                 psi.ArgumentList.Add("-");
                 psi.ArgumentList.Add("-");
@@ -233,7 +244,17 @@ public static class QafpNativeRunner
 
             if (RuntimeInformation.ProcessArchitecture == Architecture.Arm64)
             {
-                psi.FileName = RunnerPath!;
+                var internalLinker = Path.Combine(SysrootPath!, "system", "bin", "linker64");
+                if (!File.Exists("/system/bin/linker64") && File.Exists(internalLinker))
+                {
+                    psi.FileName = internalLinker;
+                    psi.Environment["LD_LIBRARY_PATH"] = Path.Combine(SysrootPath!, "system", "lib64");
+                    psi.ArgumentList.Add(RunnerPath!);
+                }
+                else
+                {
+                    psi.FileName = RunnerPath!;
+                }
                 psi.ArgumentList.Add("--server");
                 psi.ArgumentList.Add(ModelPath!);
             }
