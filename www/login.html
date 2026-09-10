@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>QQ音乐扫码登录</title>
+  <title>QQ音乐账号扫码登录</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -64,7 +64,7 @@
 </head>
 <body>
   <div class="card">
-    <h2>QQ音乐 扫码登录</h2>
+    <h2><span id="loginType">QQ</span> 扫码登录</h2>
     <div class="qr-wrap">
       <img id="qrImg" src="/qr.png" alt="登录二维码" onclick="refreshQr()">
     </div>
@@ -83,6 +83,10 @@
         if (data.status) {
           document.getElementById('statusText').innerText = data.status;
         }
+        if (data.loginType) {
+          document.getElementById('loginType').innerText = data.loginType;
+          document.getElementById('qrImg').alt = data.loginType + ' 登录二维码';
+        }
 
         if (data.ready && data.version !== currentVersion) {
           currentVersion = data.version;
@@ -92,7 +96,7 @@
         if (data.success) {
           const statusEl = document.getElementById('statusText');
           statusEl.className = 'status success';
-          statusEl.innerText = '登录成功 [' + (data.nick || 'QQ用户') + ']，终端已同步';
+          statusEl.innerText = '登录成功 [' + (data.nick || 'QQ音乐用户') + ']，终端已同步';
           document.getElementById('refreshBtn').style.display = 'none';
           return;
         }

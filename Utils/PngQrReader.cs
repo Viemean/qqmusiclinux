@@ -1,123 +1,61 @@
-using System.IO.Compression;
+using StbImageSharp;
 
 namespace QQMusic.Tui.Utils;
 
 public static class PngQrReader
 {
     /// <summary>
-    /// 将 111x111 1-bit PNG 图像解码为终端半块字符多行文本
+    /// 将二维码图像解码为适合终端显示的半块字符。
+    /// 支持登录接口返回的 PNG 与 JPEG，并保留四周静区。
     /// </summary>
-    public static List<string> DecodePngToBlockText(byte[] pngBytes)
+    public static List<string> DecodeToBlockText(byte[] imageBytes)
     {
         try
         {
-            // 校验 PNG 魔数
-            if (pngBytes.Length < 33 ||
-                pngBytes[0] != 137 || pngBytes[1] != 80 || pngBytes[2] != 78 || pngBytes[3] != 71)
+            var image = ImageResult.FromMemory(imageBytes, ColorComponents.RedGreenBlue);
+            if (image.Width <= 0 || image.Height <= 0 || image.Data.Length == 0)
             {
-                return ["无法识别的 PNG 图像数据"];
+                return ["无法识别的二维码图像数据"];
             }
 
-            // 查找 IDAT Chunk
-            int idatOffset = -1;
-            int idatLength = 0;
+            const int targetModules = 41;
+            const int quietZone = 2;
+            const int outputSize = targetModules + quietZone * 2;
+            var grid = new bool[outputSize, outputSize];
+            int side = Math.Min(image.Width, image.Height);
+            int offsetX = (image.Width - side) / 2;
+            int offsetY = (image.Height - side) / 2;
 
-            for (int i = 8; i < pngBytes.Length - 8; i++)
+            for (int y = 0; y < targetModules; y++)
             {
-                if (pngBytes[i] == (byte)'I' &&
-                    pngBytes[i + 1] == (byte)'D' &&
-                    pngBytes[i + 2] == (byte)'A' &&
-                    pngBytes[i + 3] == (byte)'T')
+                int sourceY = offsetY + Math.Min(side - 1, (2 * y + 1) * side / (2 * targetModules));
+                for (int x = 0; x < targetModules; x++)
                 {
-                    idatOffset = i + 4;
-                    idatLength = (pngBytes[i - 4] << 24) |
-                                 (pngBytes[i - 3] << 16) |
-                                 (pngBytes[i - 2] << 8) |
-                                  pngBytes[i - 1];
-                    break;
+                    int sourceX = offsetX + Math.Min(side - 1, (2 * x + 1) * side / (2 * targetModules));
+                    int pixel = (sourceY * image.Width + sourceX) * 3;
+                    int luminance = (image.Data[pixel] * 299 + image.Data[pixel + 1] * 587 + image.Data[pixel + 2] * 114) / 1000;
+                    grid[y + quietZone, x + quietZone] = luminance < 128;
                 }
             }
 
-            if (idatOffset < 0 || idatLength <= 0 || idatOffset + idatLength > pngBytes.Length)
+            var lines = new List<string>((outputSize + 1) / 2);
+            for (int y = 0; y < outputSize; y += 2)
             {
-                return ["未找到有效的图像数据段 (IDAT)"];
-            }
-
-            // 解压 zlib 数据
-            byte[] decompressed;
-            using (var ms = new MemoryStream(pngBytes, idatOffset, idatLength))
-            using (var zlib = new ZLibStream(ms, CompressionMode.Decompress))
-            using (var outMs = new MemoryStream())
-            {
-                zlib.CopyTo(outMs);
-                decompressed = outMs.ToArray();
-            }
-
-            const int width = 111;
-            const int height = 111;
-            int stride = (width + 7) / 8 + 1; // 1 字节 filter + 14 字节位数据 = 15
-
-            if (decompressed.Length < height * stride)
-            {
-                return ["图像解压尺寸异常"];
-            }
-
-            // 提取像素位矩阵 (0=黑, 1=白)
-            var bits = new int[height, width];
-            for (int y = 0; y < height; y++)
-            {
-                int rowStart = y * stride;
-                // 跳过 filter 字节 (通常为 0)
-                int bitIdx = 0;
-                for (int b = 1; b < stride && bitIdx < width; b++)
+                var line = new System.Text.StringBuilder(outputSize);
+                for (int x = 0; x < outputSize; x++)
                 {
-                    byte val = decompressed[rowStart + b];
-                    for (int shift = 7; shift >= 0 && bitIdx < width; shift--)
+                    bool top = grid[y, x];
+                    bool bottom = y + 1 < outputSize && grid[y + 1, x];
+                    line.Append((top, bottom) switch
                     {
-                        bits[y, bitIdx++] = (val >> shift) & 1;
-                    }
+                        (true, true) => '█',
+                        (true, false) => '▀',
+                        (false, true) => '▄',
+                        _ => ' '
+                    });
                 }
+                lines.Add(line.ToString());
             }
-
-            // 降采样到 37x37 二维码模块网格 (步进为 3)
-            const int step = 3;
-            const int modules = 37;
-            var grid = new int[modules, modules];
-            for (int my = 0; my < modules; my++)
-            {
-                for (int mx = 0; mx < modules; mx++)
-                {
-                    grid[my, mx] = bits[my * step, mx * step];
-                }
-            }
-
-            // 利用上下半块字符 (▀, ▄, █, 空格) 压缩渲染为 (modules + 1) / 2 行
-            // 注意：QR 码中 0 通常为黑块，1 为白背景。在终端中（默认黑底）：
-            // 黑块需要绘制前景色，白块留空（或视终端主题而定）。
-            // 为适应主流暗色终端，0 (黑模块) 绘制块字符，1 (白底) 绘制空格。
-            var lines = new List<string>();
-            int totalRows = (modules + 1) / 2;
-
-            for (int r = 0; r < totalRows; r++)
-            {
-                int topY = r * 2;
-                int botY = topY + 1;
-                var sb = new System.Text.StringBuilder(modules);
-
-                for (int x = 0; x < modules; x++)
-                {
-                    int top = grid[topY, x];
-                    int bot = (botY < modules) ? grid[botY, x] : 1;
-
-                    if (top == 0 && bot == 0) sb.Append('█');
-                    else if (top == 0 && bot == 1) sb.Append('▀');
-                    else if (top == 1 && bot == 0) sb.Append('▄');
-                    else sb.Append(' ');
-                }
-
-                lines.Add(sb.ToString());
-            }
-
             return lines;
         }
         catch (Exception ex)

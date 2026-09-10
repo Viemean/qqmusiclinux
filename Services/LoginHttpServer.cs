@@ -13,9 +13,11 @@ public sealed class LoginHttpServer : IDisposable
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private byte[]? _qrBytes;
+    private string _qrMimeType = "image/png";
     private int _qrVersion;
     private string _currentStatus = "正在初始化二维码...";
     private bool _isSuccess;
+    private string _loginType = "QQ";
     private string _userNick = "";
     private readonly object _lock = new();
     private bool _isDisposed;
@@ -85,11 +87,12 @@ public sealed class LoginHttpServer : IDisposable
     /// <summary>
     /// 动态更新二维码图像字节流
     /// </summary>
-    public void UpdateQrCode(byte[]? qrBytes)
+    public void UpdateQrCode(byte[]? qrBytes, string mimeType = "image/png")
     {
         lock (_lock)
         {
             _qrBytes = qrBytes;
+            _qrMimeType = string.IsNullOrWhiteSpace(mimeType) ? "image/png" : mimeType;
             _qrVersion++;
             if (qrBytes != null && _currentStatus == "正在初始化二维码...")
             {
@@ -99,6 +102,14 @@ public sealed class LoginHttpServer : IDisposable
     }
 
     /// <summary>
+    public void UpdateLoginType(string loginType)
+    {
+        lock (_lock)
+        {
+            _loginType = string.IsNullOrWhiteSpace(loginType) ? "QQ" : loginType;
+        }
+    }
+
     /// 更新当前扫码流程状态（供网页端同步提示）
     /// </summary>
     public void UpdateStatus(string status, bool isSuccess = false, string nick = "")
@@ -196,23 +207,26 @@ public sealed class LoginHttpServer : IDisposable
                     lock (_lock)
                     {
                         bool isReady = _qrBytes != null && _qrBytes.Length > 0;
-                        string safeStatus = _currentStatus.Replace("\"", "\\\"");
-                        string safeNick = _userNick.Replace("\"", "\\\"");
-                        statusJson = $"{{\"ready\":{(isReady ? "true" : "false")},\"success\":{(_isSuccess ? "true" : "false")},\"status\":\"{safeStatus}\",\"nick\":\"{safeNick}\",\"version\":{_qrVersion}}}";
+                        string safeStatus = _currentStatus.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                        string safeNick = _userNick.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                        string safeLoginType = _loginType.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                        statusJson = $"{{\"ready\":{(isReady ? "true" : "false")},\"success\":{(_isSuccess ? "true" : "false")},\"status\":\"{safeStatus}\",\"nick\":\"{safeNick}\",\"loginType\":\"{safeLoginType}\",\"version\":{_qrVersion}}}";
                     }
                     await SendResponseAsync(stream, 200, "OK", "application/json; charset=utf-8", statusJson, ct).ConfigureAwait(false);
                 }
                 else if (path == "/qr.png")
                 {
                     byte[]? imageBytes;
+                    string mimeType;
                     lock (_lock)
                     {
                         imageBytes = _qrBytes;
+                        mimeType = _qrMimeType;
                     }
 
                     if (imageBytes != null && imageBytes.Length > 0)
                     {
-                        await SendBinaryResponseAsync(stream, 200, "OK", "image/png", imageBytes, ct).ConfigureAwait(false);
+                        await SendBinaryResponseAsync(stream, 200, "OK", mimeType, imageBytes, ct).ConfigureAwait(false);
                     }
                     else
                     {
