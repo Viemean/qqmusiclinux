@@ -76,9 +76,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 步骤 1: 推送当前分支与标签
-echo -e "\n==> [1/5] 推送当前分支 (${CURRENT_BRANCH}) 与标签 (${TAG_NAME}) 到 origin..."
-git push origin "${CURRENT_BRANCH}" --tags
+# 步骤 1: 推送当前分支与目标标签
+echo -e "\n==> [1/5] 推送当前分支 (${CURRENT_BRANCH}) 与目标标签 (${TAG_NAME}) 到 origin..."
+git push origin "${CURRENT_BRANCH}" "${TAG_NAME}"
 
 # 步骤 2: 轮询等待 GitHub Release 产物构建完成
 echo -e "\n==> [2/5] 等待 GitHub Actions 构建并发布 Release 产物..."
