@@ -134,8 +134,9 @@ public sealed partial class QqMusicApi
             foreach (var request in requests)
             {
                 var playUrl = ExtractUrl(request.Key);
-                var available = !string.IsNullOrEmpty(playUrl);
                 var size = sizeByTier[request.Tier];
+                var available = !string.IsNullOrEmpty(playUrl) &&
+                    (request.Tier != AudioQualityTier.HiRes || sizeHires > 0);
                 var bitrate = size > 0 && interval > 0
                     ? $"{(long)Math.Round((size * 8.0) / interval / 1000.0)}kbps"
                     : "";
