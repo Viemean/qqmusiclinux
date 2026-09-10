@@ -379,10 +379,10 @@ public sealed class AudioRecognitionDialog : Dialog
             double totalSeconds = isMic ? 20.0 : 15.0;
             const int intervalMs = 100;
 
-            // 首个检查点设为 2.2s（快速尝试 QQ 音乐官方源，未命中时在 3.0s 前享受保护不触发第三方截胡；3.0s 满足最佳特征窗）
+            // 首个检查点设为 3.0s（满足 QQ 音乐官方 QAFP 最佳特征窗，避免过短切片造成无效云端请求）
             double[] sliceCheckpoints = isMic
-                ? [2.2, 3.0, 3.8, 4.8, 6.0, 7.5, 9.5, 12.0, 16.0]
-                : [2.2, 3.0, 4.0, 5.5, 7.5, 10.0, 15.0];
+                ? [3.0, 3.8, 4.8, 6.0, 7.5, 9.5, 12.0, 16.0]
+                : [3.0, 4.0, 5.5, 7.5, 10.0, 15.0];
 
             bool[] checkedSlices = new bool[sliceCheckpoints.Length];
             int inflightRequests = 0;
