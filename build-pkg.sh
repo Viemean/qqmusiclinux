@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 入参：版本号、包构建号、目标架构、.NET Runtime ID (RID)
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.2.0}"
 PKGREL="${2:-1}"
 ARCH="${3:-x86_64}"
 RID="${4:-linux-x64}"
@@ -50,12 +50,17 @@ license = MIT
 depend = gstreamer
 depend = gst-plugins-base
 depend = gst-plugins-good
+depend = gst-plugins-bad
+depend = libpulse
+$( [ "$ARCH" = "x86_64" ] && echo "depend = qemu-user" )
 optdepend = gst-libav: additional audio codecs (AAC/M4A) support
 optdepend = wl-clipboard: Wayland clipboard support for copying song links
 optdepend = xclip: X11 clipboard support for copying song links
 provides = qqmusic-tui
 conflict = qqmusic-tui
 EOF
+# 移除可能的空白行
+sed -i '/^[[:space:]]*$/d' "$STAGE_DIR/.PKGINFO"
 
 echo "==> Compressing Arch Linux package with zstd..."
 tar -C "$STAGE_DIR" -c --zstd -f "$OUTPUT_FILE" .PKGINFO usr

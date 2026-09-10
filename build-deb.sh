@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # 入参：版本号、包构建号、目标架构 (amd64 / arm64)、.NET Runtime ID (RID)
-VERSION="${1:-0.1.0}"
+VERSION="${1:-0.2.0}"
 PKGREL="${2:-1}"
 ARCH="${3:-amd64}"
 
@@ -58,6 +58,11 @@ fi
 # Debian Installed-Size 单位是 KiB
 INSTALLED_SIZE=$(du -sk "$STAGE_DIR/usr" | awk '{print $1}')
 
+DEBIAN_DEPS="libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, libpulse0"
+if [ "${ARCH}" = "amd64" ] || [ "${ARCH}" = "i386" ]; then
+    DEBIAN_DEPS="${DEBIAN_DEPS}, qemu-user-static"
+fi
+
 echo "==> Generating DEBIAN/control metadata..."
 cat << EOF > "$STAGE_DIR/DEBIAN/control"
 Package: ${PKGNAME}
@@ -67,7 +72,7 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: Yuzuki <lxf74663@gmail.com>
 Installed-Size: ${INSTALLED_SIZE}
-Depends: libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good
+Depends: ${DEBIAN_DEPS}
 Recommends: gstreamer1.0-libav
 Suggests: wl-clipboard, xclip
 Homepage: https://github.com/Viemean/qqmusiclinux/tree/tui

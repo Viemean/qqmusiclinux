@@ -2,7 +2,7 @@
 
 pkgname=qqmusic-tui-bin
 _pkgname=qqmusic-tui
-pkgver=0.1.8
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Linux terminal QQ Music player (.NET 10 Native AOT pre-built binary package)"
 arch=('x86_64' 'aarch64')
@@ -13,6 +13,11 @@ depends=(
     'gstreamer'
     'gst-plugins-base'
     'gst-plugins-good'
+    'gst-plugins-bad'
+    'libpulse'
+)
+depends_x86_64=(
+    'qemu-user'
 )
 
 optdepends=(
