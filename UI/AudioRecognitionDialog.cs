@@ -7,6 +7,7 @@ using Terminal.Gui.Views;
 using QQMusic.Tui.Models;
 using QQMusic.Tui.Services;
 using QQMusic.Tui.Services.AcrCloud;
+using QQMusic.Tui.Services.QqAudioRecognition;
 using QQMusic.Tui.Utils;
 using Attribute = Terminal.Gui.Drawing.Attribute;
 
@@ -25,6 +26,7 @@ public sealed class AudioRecognitionDialog : Dialog
     private readonly Label _detailLabel1;
     private readonly Label _detailLabel2;
     private readonly Label _detailLabel3;
+    private readonly Label _sourceLabel;
     private readonly Button _actionBtn;
     private readonly Button _sourceBtn;
     private readonly Button _keyBtn;
@@ -39,6 +41,7 @@ public sealed class AudioRecognitionDialog : Dialog
     private bool _isWorking = false;
     private bool _isDismissed = false;
     private AudioRecordingSession? _recordingSession;
+    private QafpWorkerSession? _workerSession;
 
     private static Scheme TransparentDialogScheme { get; } = new Scheme
     {
@@ -68,7 +71,7 @@ public sealed class AudioRecognitionDialog : Dialog
 
         Title = "听歌识曲";
         int dlgW = 58;
-        int dlgH = 11;
+        int dlgH = 12;
         Width = dlgW;
         Height = dlgH;
         Y = Pos.Center();
@@ -124,6 +127,16 @@ public sealed class AudioRecognitionDialog : Dialog
         };
         _detailLabel3.SetScheme(TransparentDialogScheme);
 
+        _sourceLabel = new Label
+        {
+            Text = "",
+            X = 3,
+            Y = 8,
+            Width = Dim.Fill(2),
+            Visible = false
+        };
+        _sourceLabel.SetScheme(TransparentDialogScheme);
+
         _actionBtn = new Button
         {
             Text = "重试 (R)",
@@ -170,7 +183,7 @@ public sealed class AudioRecognitionDialog : Dialog
         _cancelBtn.SetScheme(TransparentDialogScheme);
         _cancelBtn.Accepting += (s, e) => { e.Handled = true; HandleCancel(); };
 
-        Add(_statusLabel, _detailLabel1, _detailLabel2, _detailLabel3, _actionBtn, _sourceBtn, _keyBtn, _cancelBtn);
+        Add(_statusLabel, _detailLabel1, _detailLabel2, _detailLabel3, _sourceLabel, _actionBtn, _sourceBtn, _keyBtn, _cancelBtn);
 
         KeyDown += (s, k) =>
         {
@@ -307,6 +320,7 @@ public sealed class AudioRecognitionDialog : Dialog
         _detailLabel2.Text = "";
         _detailLabel2.Visible = false;
         _detailLabel3.Visible = false;
+        _sourceLabel.Visible = false;
 
         _actionBtn.Text = "重试 (R)";
         _actionBtn.X = 2;
@@ -335,6 +349,19 @@ public sealed class AudioRecognitionDialog : Dialog
             return;
         }
 
+        // 按需拉起长连接 QAFP 特征提取 Worker）
+        if (QqMusicRecognitionService.IsAvailable)
+        {
+            try
+            {
+                _workerSession = QafpNativeRunner.StartWorkerSession();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Force("AudioRecognitionDialog", $"拉起 QAFP Worker 失败: {ex.Message}");
+            }
+        }
+
         _recordingSession = AudioRecordingService.StartRecordingSession(_currentSource);
         if (!_recordingSession.IsRunning)
         {
@@ -352,11 +379,10 @@ public sealed class AudioRecognitionDialog : Dialog
             double totalSeconds = isMic ? 20.0 : 15.0;
             const int intervalMs = 100;
 
-            // 麦克风：2.0s 起每 0.8s 一个，共 8 个密集点 + 后段 2 个补充点
-            // 内录：沿用原有 7 个渐进切片
+            // 首个检查点设为 2.2s（快速尝试 QQ 音乐官方源，未命中时在 3.0s 前享受保护不触发第三方截胡；3.0s 满足最佳特征窗）
             double[] sliceCheckpoints = isMic
-                ? [2.0, 2.8, 3.6, 4.4, 5.2, 6.2, 7.4, 9.0, 12.0, 17.0]
-                : [2.2, 3.5, 5.0, 6.8, 8.8, 11.2, 15.0];
+                ? [2.2, 3.0, 3.8, 4.8, 6.0, 7.5, 9.5, 12.0, 16.0]
+                : [2.2, 3.0, 4.0, 5.5, 7.5, 10.0, 15.0];
 
             bool[] checkedSlices = new bool[sliceCheckpoints.Length];
             int inflightRequests = 0;
@@ -406,14 +432,15 @@ public sealed class AudioRecognitionDialog : Dialog
                                 {
                                     try
                                     {
-                                        var result = await AudioRecognitionService.RecognizeAndMatchPcmAsync(samples, token);
+                                        var result = await AudioRecognitionService.RecognizeAndMatchPcmAsync(samples, _workerSession, token);
                                         if (result.Success && !_isRecognized && !_isDismissed)
                                         {
                                             _isRecognized = true;
+                                            double elapsedSec = sw.Elapsed.TotalSeconds;
                                             Application.Invoke(() =>
                                             {
                                                 if (_isDismissed) return;
-                                                ShowSuccess(result);
+                                                ShowSuccess(result, elapsedSec);
                                             });
                                         }
                                     }
@@ -471,7 +498,7 @@ public sealed class AudioRecognitionDialog : Dialog
         });
     }
 
-    private void ShowSuccess(RecognitionResult result)
+    private void ShowSuccess(RecognitionResult result, double elapsedSeconds = 0)
     {
         if (_isDismissed) return;
         StopAllProcesses();
@@ -479,7 +506,7 @@ public sealed class AudioRecognitionDialog : Dialog
         _isRecognized = true;
         _recognizedSong = result.MatchedSong;
 
-        AppLogger.Force("AudioRecognitionDialog", $"Recognition success: Title='{result.Title}', Artist='{result.Artist}', Source={_currentSource}");
+        AppLogger.Force("AudioRecognitionDialog", $"Recognition success: Title='{result.Title}', Artist='{result.Artist}', Source={_currentSource}, Elapsed={elapsedSeconds:F2}s");
 
         _statusLabel.Y = 0;
         _statusLabel.Text = "识别成功！已匹配：";
@@ -495,6 +522,15 @@ public sealed class AudioRecognitionDialog : Dialog
         _detailLabel3.Text = string.IsNullOrWhiteSpace(result.Album) ? "" : $"专辑: {result.Album}";
         _detailLabel3.Y = 4;
         _detailLabel3.Visible = !string.IsNullOrWhiteSpace(result.Album);
+
+        string sourceName = result.Source == "QQMusic" 
+            ? "QQ 音乐官方优图" 
+            : result.Source;
+
+        string timeInfo = elapsedSeconds > 0 ? $"  耗时: {elapsedSeconds:F1}s" : "";
+        _sourceLabel.Text = $"来源: {sourceName}{timeInfo}";
+        _sourceLabel.Y = string.IsNullOrWhiteSpace(result.Album) ? 4 : 5;
+        _sourceLabel.Visible = true;
 
         _sourceBtn.Visible = false;
         _keyBtn.Visible = false;
@@ -543,6 +579,7 @@ public sealed class AudioRecognitionDialog : Dialog
         _detailLabel1.Visible = true;
         _detailLabel2.Visible = false;
         _detailLabel3.Visible = false;
+        _sourceLabel.Visible = false;
 
         _actionBtn.Text = "重试 (R)";
         _actionBtn.X = 2;
@@ -679,6 +716,8 @@ public sealed class AudioRecognitionDialog : Dialog
         try { _cts.Cancel(); } catch { }
         _recordingSession?.Dispose();
         _recordingSession = null;
+        _workerSession?.Dispose();
+        _workerSession = null;
     }
 
     protected override void Dispose(bool disposing)
