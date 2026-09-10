@@ -21,4 +21,8 @@
     <ProjectReference Include="..\..\QQMusic.Tui.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="TestData/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

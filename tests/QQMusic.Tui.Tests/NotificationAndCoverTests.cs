@@ -29,7 +29,10 @@ public class NotificationAndCoverTests
         var cover = await LocalMusicService.EnsureCoverAsync(emptySong);
         Assert.Null(cover);
 
-        var nonExistentSong = new Song("test2", "Test Title", "Test Artist", "Test Album", 120) { LocalFilePath = "/tmp/non_existent_music_file_xyz.mp3" };
+        var nonExistentSong = new Song("test2", "Test Title", "Test Artist", "Test Album", 120) 
+        { 
+            LocalFilePath = Path.Combine(Path.GetTempPath(), "non_existent_music_file_xyz.mp3") 
+        };
         var cover2 = await LocalMusicService.EnsureCoverAsync(nonExistentSong);
         Assert.Null(cover2);
     }
