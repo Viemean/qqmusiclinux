@@ -31,6 +31,22 @@ public sealed class LoginDialog : Dialog
         Editable  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.None)
     };
 
+    /// <summary>
+    /// 终端二维码专用高对比度实心深色背景方案（防止透明终端导致扫码对比度不足）
+    /// </summary>
+    private static Scheme QrCodeScheme { get; } = new Scheme
+    {
+        Normal    = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
+        Focus     = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
+        HotNormal = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
+        HotFocus  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
+        Disabled  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
+        Highlight = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
+        Active    = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
+        ReadOnly  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black),
+        Editable  = new Terminal.Gui.Drawing.Attribute(Color.White, Color.Black)
+    };
+
     // 1. 网页登录容器 (默认首选)
     private readonly View _webContainer;
     private readonly Label _webLanUrlLabel;
@@ -211,22 +227,24 @@ public sealed class LoginDialog : Dialog
 
         _qrView = new ListView
         {
-            X = 2,
+            X = Pos.Center(),
             Y = 1,
-            Width = 40,
-            Height = 20,
+            Width = 45,
+            Height = 23,
             CanFocus = false
         };
-        _qrView.SetScheme(TransparentDialogScheme);
+        _qrView.SetScheme(QrCodeScheme);
         _qrContainer.Add(_qrView);
 
         _qrTipLabel = new Label
         {
             Text = "提示: 手机扫码授权后将自动同步",
-            X = 2,
-            Y = 21,
-            Width = Dim.Fill(2)
+            X = Pos.Center(),
+            Y = 24,
+            Width = Dim.Fill(2),
+            TextAlignment = Alignment.Center
         };
+        _qrTipLabel.SetScheme(TransparentDialogScheme);
         _qrContainer.Add(_qrTipLabel);
 
         Add(_qrContainer);
