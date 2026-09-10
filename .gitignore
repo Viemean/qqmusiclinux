@@ -12,6 +12,7 @@ OPENAPI_INDEX_AND_MAPPING.md
 *.pkg.tar.*
 pkg/
 qqmusic-tui
+Services/QqAudioRecognition/Native/qafp_runner
 
 # 前端开发依赖
 node_modules/
