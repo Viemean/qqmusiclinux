@@ -14,10 +14,11 @@ public sealed unsafe partial class MprisService : IDisposable
 {
     private const string LibGio = "libgio-2.0.so.0";
     private const string LibGlib = "libglib-2.0.so.0";
+    private const string LibGObject = "libgobject-2.0.so.0";
 
     private const int G_BUS_TYPE_SESSION = 2;
-    private const uint DBUS_NAME_FLAG_REPLACE_EXISTING = 4;
-
+    private const uint DBUS_NAME_FLAG_ALLOW_REPLACEMENT = 1;
+    private const uint DBUS_NAME_FLAG_REPLACE_EXISTING = 2;
     private const string ServiceName = "org.mpris.MediaPlayer2.qqmusic_tui";
     private const string MprisObjectPath = "/org/mpris/MediaPlayer2";
 
@@ -34,7 +35,10 @@ public sealed unsafe partial class MprisService : IDisposable
     private uint _rootRegId;
     private uint _playerRegId;
     private GDBusInterfaceVTable* _vtable;
+    private uint _busNameResult;
 
+    public bool IsReady => _isReady;
+    public uint BusNameResult => _busNameResult;
     // 当前 MPRIS 状态缓存
     private string _playbackStatus = "Stopped";
     private double _volume = 0.8;
@@ -120,8 +124,15 @@ public sealed unsafe partial class MprisService : IDisposable
         </node>
         """;
 
+
     public Task StartAsync()
     {
+        if (!OperatingSystem.IsLinux())
+        {
+            AppLogger.Info("MprisService", "MPRIS2 is only available on Linux; skipping native GIO initialization");
+            return Task.CompletedTask;
+        }
+
         s_instance = this;
 
         try
@@ -183,11 +194,17 @@ public sealed unsafe partial class MprisService : IDisposable
                 0, 0, out _
             );
 
-            // 6. 申请 MPRIS2 熟知总线名称
-            RequestBusName(ServiceName);
-
-            _isReady = true;
-            AppLogger.Info("MprisService", $"MPRIS2 service started successfully via GIO on {ServiceName}");
+            // 6. 申请 MPRIS2 熟知总线名称；只有成为所有者后才对外宣告就绪。
+            _busNameResult = RequestBusName(ServiceName);
+            _isReady = _rootRegId != 0 && _playerRegId != 0 && _busNameResult is 1 or 4;
+            if (_isReady)
+            {
+                AppLogger.Info("MprisService", $"MPRIS2 service started successfully via GIO on {ServiceName}");
+            }
+            else
+            {
+                AppLogger.Error("MprisService", $"MPRIS2 registration failed: root={_rootRegId}, player={_playerRegId}, requestName={_busNameResult}");
+            }
         }
         catch (Exception ex)
         {
@@ -197,14 +214,14 @@ public sealed unsafe partial class MprisService : IDisposable
         return Task.CompletedTask;
     }
 
-    private void RequestBusName(string name)
+    private uint RequestBusName(string name)
     {
         try
         {
             var tuple = g_variant_new_tuple(
                 [
                     g_variant_new_string(name),
-                    g_variant_new_uint32(DBUS_NAME_FLAG_REPLACE_EXISTING)
+                    g_variant_new_uint32(DBUS_NAME_FLAG_ALLOW_REPLACEMENT | DBUS_NAME_FLAG_REPLACE_EXISTING)
                 ],
                 2
             );
@@ -216,25 +233,29 @@ public sealed unsafe partial class MprisService : IDisposable
                 "org.freedesktop.DBus",
                 "RequestName",
                 tuple,
-                0, 0, -1, 0, out nint err
+                0, 0, -1, 0, out _
             );
+            if (res == 0) return 0;
 
-            if (res != 0)
-            {
-                g_variant_unref(res);
-            }
+            nint child = g_variant_get_child_value(res, 0);
+            uint result = child == 0 ? 0 : g_variant_get_uint32(child);
+            if (child != 0) g_variant_unref(child);
+            g_variant_unref(res);
+            return result;
         }
         catch (Exception ex)
         {
             AppLogger.Error("MprisService", $"Failed to request bus name {name}", ex);
+            return 0;
         }
     }
 
     public void UpdatePlaybackStatus(bool isPlaying)
     {
-        var status = isPlaying ? "Playing" : "Paused";
+        string status;
         lock (_lock)
         {
+            status = _currentSong == null ? "Stopped" : isPlaying ? "Playing" : "Paused";
             if (_playbackStatus == status) return;
             _playbackStatus = status;
         }
@@ -386,14 +407,21 @@ public sealed unsafe partial class MprisService : IDisposable
             AppLogger.Error("MprisService", "Failed to emit PropertiesChanged signal", ex);
         }
     }
-
     public void Dispose()
     {
+        if (!OperatingSystem.IsLinux())
+        {
+            _disposed = true;
+            return;
+        }
+
+        Thread? loopThread;
+        nint mainLoop;
         lock (_lock)
         {
             if (_disposed) return;
             _disposed = true;
-
+            _isReady = false;
             s_instance = null;
 
             if (_rootRegId != 0 && _connection != 0)
@@ -401,25 +429,45 @@ public sealed unsafe partial class MprisService : IDisposable
                 g_dbus_connection_unregister_object(_connection, _rootRegId);
                 _rootRegId = 0;
             }
-
             if (_playerRegId != 0 && _connection != 0)
             {
                 g_dbus_connection_unregister_object(_connection, _playerRegId);
                 _playerRegId = 0;
             }
 
+            mainLoop = _mainLoop;
+            loopThread = _loopThread;
+            if (mainLoop != 0) g_main_loop_quit(mainLoop);
+        }
+
+        if (loopThread != null && loopThread != Thread.CurrentThread)
+        {
+            loopThread.Join(TimeSpan.FromSeconds(2));
+        }
+
+        lock (_lock)
+        {
             if (_vtable != null)
             {
                 NativeMemory.Free(_vtable);
                 _vtable = null;
             }
-
+            if (_nodeInfo != 0)
+            {
+                g_dbus_node_info_unref(_nodeInfo);
+                _nodeInfo = 0;
+            }
+            if (_connection != 0)
+            {
+                g_object_unref(_connection);
+                _connection = 0;
+            }
             if (_mainLoop != 0)
             {
-                g_main_loop_quit(_mainLoop);
                 g_main_loop_unref(_mainLoop);
                 _mainLoop = 0;
             }
+            _loopThread = null;
         }
     }
 
@@ -436,6 +484,9 @@ public sealed unsafe partial class MprisService : IDisposable
 
     [LibraryImport(LibGlib)]
     private static partial void g_main_loop_unref(nint loop);
+
+    [LibraryImport(LibGObject)]
+    private static partial void g_object_unref(nint value);
 
     [LibraryImport(LibGlib, StringMarshalling = StringMarshalling.Utf8)]
     private static partial nint g_variant_type_new(string typeString);
@@ -469,6 +520,9 @@ public sealed unsafe partial class MprisService : IDisposable
 
     [LibraryImport(LibGlib)]
     private static partial nint g_variant_new_uint32(uint value);
+
+    [LibraryImport(LibGlib)]
+    private static partial uint g_variant_get_uint32(nint value);
 
     [LibraryImport(LibGlib, StringMarshalling = StringMarshalling.Utf8)]
     private static partial nint g_variant_new_object_path(string path);
@@ -507,6 +561,9 @@ public sealed unsafe partial class MprisService : IDisposable
 
     [LibraryImport(LibGio, StringMarshalling = StringMarshalling.Utf8)]
     private static partial nint g_dbus_node_info_new_for_xml(string xml, out nint error);
+
+    [LibraryImport(LibGio)]
+    private static partial void g_dbus_node_info_unref(nint info);
 
     [LibraryImport(LibGio, StringMarshalling = StringMarshalling.Utf8)]
     private static partial nint g_dbus_node_info_lookup_interface(nint info, string name);

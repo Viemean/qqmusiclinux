@@ -23,7 +23,7 @@ public sealed partial class MainWindow : Window
     private readonly bool _isWebMode;
     private long _lastUserActivityTick = Environment.TickCount64;
     private object? _aodInactivityTimerToken;
-    private readonly MprisService _mprisService;
+    private readonly SystemMediaSessionService _mprisService;
     private PlaybackMode _currentPlaybackMode;
     private readonly TextField _searchField;
     private readonly FrameView _sidebarFrame;
@@ -164,18 +164,17 @@ public sealed partial class MainWindow : Window
         _preMuteVolume = initialVolume;
         _player.SetVolume(initialVolume);
 
-        _mprisService = new MprisService();
+        _mprisService = new SystemMediaSessionService();
         SetupMprisService();
 
         Task.Run(async () =>
         {
-            var ok = await LoginService.EnsureMusicKeyAsync();
-            if (ok)
+            var keyReady = await LoginService.EnsureMusicKeyAsync();
+            var profileReady = UserSession.Current.IsLoggedIn &&
+                               await QqMusicApi.RefreshCurrentUserProfileAsync();
+            if (keyReady || profileReady)
             {
-                Application.Invoke(() =>
-                {
-                    UpdateTopRightButtonsLayout();
-                });
+                Application.Invoke(UpdateTopRightButtonsLayout);
             }
         });
 

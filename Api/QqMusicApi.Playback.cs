@@ -17,16 +17,35 @@ public sealed partial class QqMusicApi
         var url = "https://u.y.qq.com/cgi-bin/musicu.fcg";
         var uin = string.IsNullOrEmpty(UserSession.Current.Uin) ? "0" : UserSession.Current.Uin;
 
-        var jsonPayload = $"{{\"comm\":{{\"uin\":\"{uin}\",\"format\":\"json\",\"ct\":19,\"cv\":1,\"authst\":\"\"}}," +
-            $"\"songinfo\":{{\"module\":\"music.pf_song_detail_svr\",\"method\":\"get_song_detail_yqq\",\"param\":{{\"song_mid\":\"{songMid}\"}}}}," +
-            $"\"req_hires\":{{\"module\":\"vkey.GetVkeyServer\",\"method\":\"CgiGetVkey\",\"param\":{{\"guid\":\"10000\",\"songmid\":[\"{songMid}\"],\"songtype\":[0],\"uin\":\"{uin}\",\"loginflag\":1,\"platform\":\"20\",\"filename\":[\"RS01{mediaMid}.flac\"]}}}}," +
-            $"\"req_sq\":{{\"module\":\"vkey.GetVkeyServer\",\"method\":\"CgiGetVkey\",\"param\":{{\"guid\":\"10000\",\"songmid\":[\"{songMid}\"],\"songtype\":[0],\"uin\":\"{uin}\",\"loginflag\":1,\"platform\":\"20\",\"filename\":[\"F000{mediaMid}.flac\"]}}}}," +
-            $"\"req_320\":{{\"module\":\"vkey.GetVkeyServer\",\"method\":\"CgiGetVkey\",\"param\":{{\"guid\":\"10000\",\"songmid\":[\"{songMid}\"],\"songtype\":[0],\"uin\":\"{uin}\",\"loginflag\":1,\"platform\":\"20\",\"filename\":[\"M800{mediaMid}.mp3\"]}}}}," +
-            $"\"req_128\":{{\"module\":\"vkey.GetVkeyServer\",\"method\":\"CgiGetVkey\",\"param\":{{\"guid\":\"10000\",\"songmid\":[\"{songMid}\"],\"songtype\":[0],\"uin\":\"{uin}\",\"loginflag\":1,\"platform\":\"20\",\"filename\":[\"M500{mediaMid}.mp3\"]}}}}," +
-            $"\"req_m4a\":{{\"module\":\"vkey.GetVkeyServer\",\"method\":\"CgiGetVkey\",\"param\":{{\"guid\":\"10000\",\"songmid\":[\"{songMid}\"],\"songtype\":[0],\"uin\":\"{uin}\",\"loginflag\":1,\"platform\":\"20\",\"filename\":[\"C400{mediaMid}.m4a\"]}}}}," +
-            $"\"req_trial\":{{\"module\":\"vkey.GetVkeyServer\",\"method\":\"CgiGetVkey\",\"param\":{{\"guid\":\"10000\",\"songmid\":[\"{songMid}\"],\"songtype\":[0],\"uin\":\"{uin}\",\"loginflag\":1,\"platform\":\"20\",\"filename\":[\"RS02{mediaMid}.mp3\"]}}}}}}";
+        var requests = new (string Key, AudioQualityTier Tier, string Prefix, string Extension)[]
+        {
+            ("req_master", AudioQualityTier.Master, "AI00", ".flac"),
+            ("req_premium", AudioQualityTier.Premium, "Q000", ".flac"),
+            ("req_atmos51", AudioQualityTier.Atmos51, "Q001", ".flac"),
+            ("req_atmos71", AudioQualityTier.Atmos71, "Q003", ".ogg"),
+            ("req_dolby", AudioQualityTier.Dolby, "D004", ".mp4"),
+            ("req_hires", AudioQualityTier.HiRes, "RS01", ".flac"),
+            ("req_sq", AudioQualityTier.SQ, "F000", ".flac"),
+            ("req_320", AudioQualityTier.HQ, "M800", ".mp3"),
+            ("req_128", AudioQualityTier.Standard, "M500", ".mp3")
+        };
+        var requestJson = new StringBuilder(1536);
+        requestJson.Append("{\"comm\":{\"uin\":\"").Append(JsonEncodedText.Encode(uin)).Append("\",\"format\":\"json\",\"ct\":19,\"cv\":1,\"authst\":\"\"},")
+            .Append("\"songinfo\":{\"module\":\"music.pf_song_detail_svr\",\"method\":\"get_song_detail_yqq\",\"param\":{\"song_mid\":\"")
+            .Append(JsonEncodedText.Encode(songMid)).Append("\"}}");
+        foreach (var request in requests)
+        {
+            requestJson.Append(",\"").Append(request.Key)
+                .Append("\":{\"module\":\"vkey.GetVkeyServer\",\"method\":\"CgiGetVkey\",\"param\":{\"guid\":\"10000\",\"songmid\":[\"")
+                .Append(JsonEncodedText.Encode(songMid)).Append("\"],\"songtype\":[0],\"uin\":\"")
+                .Append(JsonEncodedText.Encode(uin)).Append("\",\"loginflag\":1,\"platform\":\"20\",\"filename\":[\"")
+                .Append(request.Prefix).Append(JsonEncodedText.Encode(mediaMid)).Append(request.Extension)
+                .Append("\"]}}");
+        }
+        requestJson.Append('}');
+        var jsonPayload = requestJson.ToString();
 
-        var options = new List<QualityOption>(8);
+        var options = new List<QualityOption>(requests.Length);
         try
         {
             using var req = new HttpRequestMessage(HttpMethod.Post, url);
@@ -44,53 +63,36 @@ public sealed partial class QqMusicApi
             using var doc = JsonDocument.Parse(respStr);
             var root = doc.RootElement;
 
+            long interval = 0;
+            long[] sizeNew = [];
+            long sizeDolby = 0;
             long sizeHires = 0;
             long sizeFlac = 0;
             long size320 = 0;
             long size128 = 0;
-            long interval = 0;
-            bool songInfoAvailable = false;
 
             if (root.TryGetProperty("songinfo", out var songInfoObj) &&
                 songInfoObj.TryGetProperty("data", out var songData) &&
                 songData.TryGetProperty("track_info", out var trackInfo))
             {
-                songInfoAvailable = true;
-                if (trackInfo.TryGetProperty("interval", out var intervalProp))
-                {
-                    interval = intervalProp.GetInt64();
-                }
-
+                if (trackInfo.TryGetProperty("interval", out var intervalProp)) intervalProp.TryGetInt64(out interval);
                 if (trackInfo.TryGetProperty("file", out var fileObj))
                 {
-                    if (fileObj.TryGetProperty("size_hires", out var sh)) sizeHires = sh.GetInt64();
-                    if (sizeHires == 0 && fileObj.TryGetProperty("size_96flac", out var s96)) sizeHires = s96.GetInt64();
-                    if (sizeHires == 0 && fileObj.TryGetProperty("size_24bit", out var s24)) sizeHires = s24.GetInt64();
-
-                    if (fileObj.TryGetProperty("size_flac", out var sf)) sizeFlac = sf.GetInt64();
-                    if (fileObj.TryGetProperty("size_320mp3", out var s320)) size320 = s320.GetInt64();
-                    if (fileObj.TryGetProperty("size_128mp3", out var s128)) size128 = s128.GetInt64();
-
-                    if (fileObj.TryGetProperty("size_new", out var sizeNewArr) && sizeNewArr.ValueKind == JsonValueKind.Array)
+                    sizeDolby = ReadJsonInt64(fileObj, "size_dolby");
+                    sizeHires = ReadJsonInt64(fileObj, "size_hires");
+                    if (sizeHires == 0) sizeHires = ReadJsonInt64(fileObj, "size_96flac");
+                    if (sizeHires == 0) sizeHires = ReadJsonInt64(fileObj, "size_24bit");
+                    sizeFlac = ReadJsonInt64(fileObj, "size_flac");
+                    size320 = ReadJsonInt64(fileObj, "size_320mp3");
+                    size128 = ReadJsonInt64(fileObj, "size_128mp3");
+                    if (fileObj.TryGetProperty("size_new", out var values) && values.ValueKind == JsonValueKind.Array)
                     {
-                        var arrLen = sizeNewArr.GetArrayLength();
-                        if (sizeHires == 0 && arrLen > 11)
-                        {
-                            sizeHires = sizeNewArr[11].GetInt64();
-                            if (sizeHires == 0 && arrLen > 13) sizeHires = sizeNewArr[13].GetInt64();
-                        }
-                        if (sizeFlac == 0 && arrLen > 12)
-                        {
-                            sizeFlac = sizeNewArr[12].GetInt64();
-                        }
-                        if (size320 == 0 && arrLen > 3)
-                        {
-                            size320 = sizeNewArr[3].GetInt64();
-                        }
+                        sizeNew = values.EnumerateArray()
+                            .Select(value => value.TryGetInt64(out var size) ? size : 0)
+                            .ToArray();
                     }
                 }
             }
-
             string? ExtractUrl(string reqKey)
             {
                 if (root.TryGetProperty(reqKey, out var reqObj) &&
@@ -116,71 +118,44 @@ public sealed partial class QqMusicApi
                 return null;
             }
 
-            var hiresUrl = ExtractUrl("req_hires");
-            var sqUrl = ExtractUrl("req_sq");
-            var hqUrl = ExtractUrl("req_320");
-            var stdUrl = ExtractUrl("req_128") ?? ExtractUrl("req_m4a") ?? ExtractUrl("req_trial");
+            var sizeByTier = new Dictionary<AudioQualityTier, long>
+            {
+                [AudioQualityTier.Master] = GetArrayValue(sizeNew, 0),
+                [AudioQualityTier.Premium] = GetArrayValue(sizeNew, 1),
+                [AudioQualityTier.Atmos51] = GetArrayValue(sizeNew, 2),
+                [AudioQualityTier.Atmos71] = GetArrayValue(sizeNew, 3),
+                [AudioQualityTier.Dolby] = sizeDolby,
+                [AudioQualityTier.HiRes] = sizeHires > 0 ? sizeHires : Math.Max(GetArrayValue(sizeNew, 11), GetArrayValue(sizeNew, 13)),
+                [AudioQualityTier.SQ] = sizeFlac > 0 ? sizeFlac : GetArrayValue(sizeNew, 12),
+                [AudioQualityTier.HQ] = size320 > 0 ? size320 : GetArrayValue(sizeNew, 3),
+                [AudioQualityTier.Standard] = size128
+            };
 
-            bool hasHires = songInfoAvailable ? (sizeHires > 0 && hiresUrl != null) : (hiresUrl != null);
-            bool hasSq = songInfoAvailable ? ((sizeFlac > 0 || sizeHires > 0) && sqUrl != null) : (sqUrl != null);
-            bool hasHq = songInfoAvailable ? ((size320 > 0 || sizeFlac > 0 || sizeHires > 0) && hqUrl != null) : (hqUrl != null);
-            bool hasStd = stdUrl != null;
-
-            string hiresBitrate = (sizeHires > 0 && interval > 0)
-                ? $"{(long)Math.Round((sizeHires * 8.0) / interval / 1000.0)}kbps"
-                : (hasHires ? "2968kbps" : "");
-
-            string sqBitrate = (sizeFlac > 0 && interval > 0)
-                ? $"{(long)Math.Round((sizeFlac * 8.0) / interval / 1000.0)}kbps"
-                : (hasSq ? "892kbps" : "");
-
-            options.Add(new QualityOption(
-                AudioQualityTier.HiRes,
-                "Hi-Res",
-                "Hi-Res",
-                "24bit / 96kHz",
-                hiresBitrate,
-                hasHires,
-                hasHires ? hiresUrl : null
-            ));
-
-            options.Add(new QualityOption(
-                AudioQualityTier.SQ,
-                "SQ",
-                "SQ",
-                "16bit / 44.1kHz",
-                sqBitrate,
-                hasSq,
-                hasSq ? sqUrl : null
-            ));
-
-            options.Add(new QualityOption(
-                AudioQualityTier.HQ,
-                "HQ",
-                "HQ",
-                "320kbps",
-                "",
-                hasHq,
-                hasHq ? hqUrl : null
-            ));
-
-            options.Add(new QualityOption(
-                AudioQualityTier.Standard,
-                "标准",
-                "标准",
-                "128kbps",
-                "",
-                hasStd,
-                hasStd ? stdUrl : null
-            ));
+            foreach (var request in requests)
+            {
+                var playUrl = ExtractUrl(request.Key);
+                var available = !string.IsNullOrEmpty(playUrl);
+                var size = sizeByTier[request.Tier];
+                var bitrate = size > 0 && interval > 0
+                    ? $"{(long)Math.Round((size * 8.0) / interval / 1000.0)}kbps"
+                    : "";
+                options.Add(new QualityOption(
+                    request.Tier,
+                    AudioQualityHelper.GetBadge(request.Tier),
+                    AudioQualityHelper.GetQualityName(request.Tier),
+                    AudioQualityHelper.GetDefaultSpec(request.Tier),
+                    bitrate,
+                    available,
+                    available ? playUrl : null));
+            }
         }
         catch (Exception ex)
         {
             AppLogger.Error("QqMusicApi", "ProbeSongQualitiesAsync exception", ex);
-            options.Add(new QualityOption(AudioQualityTier.HiRes, "Hi-Res", "Hi-Res", "24bit / 96kHz", "", false));
-            options.Add(new QualityOption(AudioQualityTier.SQ, "SQ", "SQ", "16bit / 44.1kHz", "", false));
-            options.Add(new QualityOption(AudioQualityTier.HQ, "HQ", "HQ", "320kbps", "", false));
-            options.Add(new QualityOption(AudioQualityTier.Standard, "标准", "标准", "128kbps", "", true));
+            foreach (var tier in AudioQualityHelper.SelectionOrder)
+            {
+                options.Add(new QualityOption(tier, AudioQualityHelper.GetBadge(tier), AudioQualityHelper.GetQualityName(tier), AudioQualityHelper.GetDefaultSpec(tier), "", false));
+            }
         }
 
         return options;
@@ -200,19 +175,13 @@ public sealed partial class QqMusicApi
             return (target.PlayUrl, target.Badge, target.Tier);
         }
 
-        // 若目标档位不可用，则按优先级向下回退：HiRes -> SQ -> HQ -> Standard
-        var fallbackOrder = new[] { AudioQualityTier.HiRes, AudioQualityTier.SQ, AudioQualityTier.HQ, AudioQualityTier.Standard };
-        var startChecking = false;
-        foreach (var tier in fallbackOrder)
+        // 若目标档位不可用，则只向定义好的兼容档位回退，避免在特殊编码间横跳。
+        foreach (var tier in AudioQualityHelper.GetFallbackTiers(preferred))
         {
-            if (tier == preferred) startChecking = true;
-            if (startChecking)
+            var opt = options.FirstOrDefault(o => o.Tier == tier && o.Available);
+            if (opt != null && !string.IsNullOrEmpty(opt.PlayUrl))
             {
-                var opt = options.FirstOrDefault(o => o.Tier == tier && o.Available);
-                if (opt != null && !string.IsNullOrEmpty(opt.PlayUrl))
-                {
-                    return (opt.PlayUrl, opt.Badge, opt.Tier);
-                }
+                return (opt.PlayUrl, opt.Badge, opt.Tier);
             }
         }
 
@@ -225,6 +194,14 @@ public sealed partial class QqMusicApi
 
         return (null, "无音源", AudioQualityTier.Standard);
     }
+    private static long ReadJsonInt64(JsonElement source, string property) =>
+        source.TryGetProperty(property, out var value) && value.TryGetInt64(out var number) ? number : 0;
+
+    private static long GetArrayValue(long[] source, int index) =>
+        index >= 0 && index < source.Length ? source[index] : 0;
+
+    private static string GetQualityName(AudioQualityTier tier) => AudioQualityHelper.GetQualityName(tier);
+
 
     /// <summary>
     /// 获取歌曲直链播放 URL 与对应音质档位（自动读取用户偏好音质）

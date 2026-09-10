@@ -399,10 +399,10 @@ public sealed partial class LoginService
             return false;
         }
 
-        return SaveCredential(data, type);
+        return await SaveCredentialAsync(data, type, ct).ConfigureAwait(false);
     }
 
-    private static bool SaveCredential(JsonElement data, QrLoginType type)
+    private static async Task<bool> SaveCredentialAsync(JsonElement data, QrLoginType type, CancellationToken ct)
     {
         var musicId = GetJsonString(data, "str_musicid");
         if (string.IsNullOrEmpty(musicId)) musicId = GetJsonString(data, "musicid");
@@ -433,6 +433,7 @@ public sealed partial class LoginService
         UserSession.Current.MusicKey = musicKey;
         UserSession.Current.Cookies = cookies;
         UserSession.Current.Save();
+        await QqMusicApi.RefreshCurrentUserProfileAsync(ct).ConfigureAwait(false);
         AppLogger.Info("LoginService", $"{GetLoginTypeName(type)} login credentials stored for musicid={musicId}");
         return true;
     }
@@ -603,6 +604,7 @@ public sealed partial class LoginService
                     UserSession.Current.IsVip = true;
                     UserSession.Current.Cookies = cookieDict;
                     UserSession.Current.Save();
+                    await QqMusicApi.RefreshCurrentUserProfileAsync(ct).ConfigureAwait(false);
                     AppLogger.Info("LoginService", $"Full QQ Music VIP cookies successfully stored to UserSession! Total cookies: {cookieDict.Count}");
                     return true;
                 }

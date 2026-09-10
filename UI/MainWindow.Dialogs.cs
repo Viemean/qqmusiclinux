@@ -23,10 +23,7 @@ public sealed partial class MainWindow
         {
             var dlg = new LoginDialog(() =>
             {
-                Application.Invoke(() =>
-                {
-                    UpdateTopRightButtonsLayout();
-                });
+                Application.Invoke(UpdateTopRightButtonsLayout);
             });
             Application.Run(dlg);
             UpdateTopRightButtonsLayout();
@@ -182,7 +179,7 @@ public sealed partial class MainWindow
                 Directory.CreateDirectory(targetDir);
             }
 
-            string ext = (actualTier == AudioQualityTier.HiRes || actualTier == AudioQualityTier.SQ) ? ".flac" : ".mp3";
+            string ext = AudioQualityHelper.GetExtension(actualTier);
             string safeArtist = string.Join("_", song.Artist.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
             string safeTitle = string.Join("_", song.Title.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
             string fileName = $"{safeArtist} - {safeTitle}{ext}";
