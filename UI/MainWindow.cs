@@ -196,7 +196,7 @@ public sealed partial class MainWindow : Window
         };
         Add(_searchLabel);
 
-        // 顶部用户状态按钮：通过点击或 F2 快捷键唤起
+        // 顶部用户状态按钮：通过点击或 U 快捷键唤起
         _userStatusBtn = new Button
         {
             Text = GetUserStatusText(),

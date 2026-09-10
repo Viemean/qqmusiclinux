@@ -40,7 +40,7 @@ public static partial class Program
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var res = QQMusic.Tui.Services.AudioRecognitionService.RecognizeAndMatchAsync(wavPath).GetAwaiter().GetResult();
             sw.Stop();
-            Console.WriteLine($"[Recognize Benchmark] Success={res.Success}, Title='{res.Title}', Artist='{res.Artist}', Album='{res.Album}', TotalElapsed={sw.ElapsedMilliseconds}ms, Err='{res.ErrorMessage}'");
+            Console.WriteLine($"[Recognize Benchmark] Success={res.Success}, Source='{res.Source}', Title='{res.Title}', Artist='{res.Artist}', Album='{res.Album}', TotalElapsed={sw.ElapsedMilliseconds}ms, Err='{res.ErrorMessage}'");
             if (res.MatchedSong != null)
             {
                 Console.WriteLine($"[QQ Music Matched] '{res.MatchedSong.Title}' - '{res.MatchedSong.Artist}' (Album: {res.MatchedSong.Album})");
