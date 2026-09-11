@@ -80,6 +80,12 @@ public sealed partial class MainWindow : Window
     private bool _isLoadingMore = false;
     private bool _hasMoreSearchResults = false;
     private bool _isSearching = false;
+    private SearchOverview? _searchOverview;
+    private SearchCategory? _searchCategory;
+    private List<Song> _searchSongItems = [];
+    private List<SearchSinger> _searchSingerItems = [];
+    private List<SearchAlbum> _searchAlbumItems = [];
+    private List<SearchPlaylist> _searchPlaylistItems = [];
     private const int PageSize = 50;
 
     private Playlist? _currentDrilldownPlaylist = null;
@@ -269,6 +275,11 @@ public sealed partial class MainWindow : Window
                 _songListView?.SetFocusToList();
                 Application.Invoke(UpdateFrameBorderHighlights);
             }
+            else if (k == Key.CursorDown || (k.IsCtrl && char.ToUpperInvariant((char)k.AsRune.Value) == 'J'))
+            {
+                k.Handled = true;
+                await ShowSearchSuggestionsAsync();
+            }
             else if (k == Key.Tab || k.ToString().Contains("Tab"))
             {
                 k.Handled = true;
@@ -276,7 +287,7 @@ public sealed partial class MainWindow : Window
                 _searchField.CanFocus = false;
                 SwitchNextFocusWindow(!k.IsShift);
             }
-            else if (k == Key.Esc || k == Key.CursorDown || k == Key.CursorUp)
+            else if (k == Key.Esc || k == Key.CursorUp)
             {
                 k.Handled = true;
                 _isSearchActive = false;
@@ -1179,6 +1190,7 @@ public sealed partial class MainWindow : Window
     {
         if (disposing)
         {
+
             try
             {
                 DisableWebAodWatchdog();

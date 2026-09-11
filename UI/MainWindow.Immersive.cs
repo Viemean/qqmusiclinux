@@ -384,6 +384,12 @@ public sealed partial class MainWindow
         {
             CloseNowPlayingView();
         }
+        else if (_currentViewMode == ViewMode.Search && _searchCategory != null && _searchOverview != null)
+        {
+            _searchCategory = null;
+            _hasMoreSearchResults = false;
+            RenderSearchOverview(_searchOverview);
+        }
         else if (_navigationStack.Count > 0)
         {
             PopNavigationSnapshot();

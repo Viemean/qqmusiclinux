@@ -27,7 +27,11 @@ public sealed partial class MainWindow
         string? SingerCoverPath = null,
         List<Album>? SingerAlbums = null,
         List<Song>? SingerCachedSongs = null,
-        int SingerSongOrder = 1
+        int SingerSongOrder = 1,
+        SearchOverview? SearchOverview = null,
+        SearchCategory? SearchCategory = null,
+        int SearchPage = 1,
+        bool SearchHasMore = false
     );
 
     private readonly Stack<PageNavigationSnapshot> _navigationStack = new();
@@ -645,7 +649,11 @@ public sealed partial class MainWindow
             SingerCoverPath: _currentSingerCoverPath,
             SingerAlbums: _singerAlbums.Count > 0 ? [.. _singerAlbums] : null,
             SingerCachedSongs: _singerCachedSongs.Count > 0 ? [.. _singerCachedSongs] : null,
-            SingerSongOrder: _singerSongOrder
+            SingerSongOrder: _singerSongOrder,
+            SearchOverview: _searchOverview,
+            SearchCategory: _searchCategory,
+            SearchPage: _searchCurrentPage,
+            SearchHasMore: _hasMoreSearchResults
         ));
     }
 
@@ -699,6 +707,28 @@ public sealed partial class MainWindow
             SetNeedsDraw();
             return;
         }
+
+        if (snapshot.ViewMode == ViewMode.Search && snapshot.SearchOverview != null && snapshot.SearchCategory == null)
+        {
+            _searchOverview = snapshot.SearchOverview;
+            _searchCategory = null;
+            RenderSearchOverview(snapshot.SearchOverview);
+            ShowLyricView();
+            SetNeedsDraw();
+            return;
+        }
+        if (snapshot.ViewMode == ViewMode.Search && snapshot.SearchOverview != null && snapshot.SearchCategory != null)
+        {
+            _searchOverview = snapshot.SearchOverview;
+            _searchCategory = snapshot.SearchCategory;
+            _searchCurrentPage = snapshot.SearchPage;
+            _hasMoreSearchResults = snapshot.SearchHasMore;
+            ShowLyricView();
+            RestoreSearchCategorySnapshot(snapshot.SearchCategory.Value, snapshot.Songs, snapshot.SelectedIndex);
+            SetNeedsDraw();
+            return;
+        }
+
 
         // 非歌手模式（搜索、我的喜欢、歌单等）：恢复普通歌曲列表，恢复右侧为歌词
         _songListView.SetSongs(snapshot.Songs, snapshot.StatusTitle);

@@ -227,7 +227,16 @@ public sealed partial class MainWindow
                 return;
             }
 
+            if (k.IsCtrl && char.ToUpperInvariant((char)k.AsRune.Value) == 'J')
+            {
+                if (_isNowPlayingViewActive) return;
+                k.Handled = true;
+                await ShowSearchSuggestionsAsync();
+                return;
+            }
+
             char c = char.ToUpperInvariant((char)k.AsRune.Value);
+
 
             if (_currentViewMode == ViewMode.ArtistDetail && !_isSearchActive)
             {
